@@ -1,0 +1,51 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# Patient and medical data bundled with local builds
+src/imported-data.js
+/ОТКРЫТЬ CRM.html
+
+# CRM backups, exports, and data extracts
+*crm*backup*.json
+*CRM*backup*.json
+*crm*export*.json
+*CRM*export*.json
+*patient*.json
+*patients*.json
+*пациент*.json
+*Пациент*.json
+*.csv
+*.xls
+*.xlsx
+*.zip
+/backup/
+/backups/
+/export/
+/exports/
+
+# Temporary and backup files
+*.bak
+*.backup
+*.tmp
+*.temp
+*.log
+*.orig
+*.rej
+*~
+.tmp/
+tmp/
+temp/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
