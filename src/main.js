@@ -262,7 +262,8 @@ function isCallTaskType(type) {
 function taskTypeDisplay(task) {
   const label = TASK_TYPES.find(item => item.value === task?.type)?.label || task?.title || 'Задача'
   if (task?.type !== 'reminder') return label
-  return `${label} · ${task.reminderTarget === 'doctor' ? 'Доктору' : 'Пациенту'}`
+  if (task.reminderTarget === 'doctor') return '👨‍⚕️ Напоминание доктору'
+  return `${task.reminderMethod === 'write' ? '💬' : '📞'} Напоминание пациенту`
 }
 
 function getUpcomingActiveTasks(tasks = state.tasks) {
@@ -1879,11 +1880,55 @@ function completePatientTasks(patientId, predicate, completedAt, reason) {
   })
 }
 
+function openUniversalReminderModal(patient) {
+  document.querySelector('#universalReminderModal')?.remove()
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="universalReminderModal"><div class="dialog reminder-dialog" role="dialog" aria-modal="true" aria-labelledby="universalReminderTitle">
+    <div class="dialog-head"><div><h2 id="universalReminderTitle">🔔 Напомнить</h2><p>${esc(patient.name)}</p></div><button class="icon-btn" data-close-reminder>×</button></div>
+    <div class="reminder-form">
+      <fieldset class="reminder-choice"><legend>Кому напомнить?</legend><label><input type="radio" name="reminderTarget" value="patient" checked> Пациенту</label><label><input type="radio" name="reminderTarget" value="doctor"> Доктору</label></fieldset>
+      <fieldset class="reminder-choice" id="reminderContactMethod"><legend>Способ связи</legend><label><input type="radio" name="reminderMethod" value="call" checked> Позвонить</label><label><input type="radio" name="reminderMethod" value="write"> Написать</label></fieldset>
+      <div class="custom-datetime-grid">${manualDateMarkup('universalReminder', 'Дата', localDatePlus(1))}${manualTimeMarkup('universalReminder', 'Время', '10:00')}</div>
+      <label class="field"><span>Комментарий *</span><textarea id="universalReminderComment" placeholder="Например: напомнить прислать КТ"></textarea><small class="form-error" id="universalReminderCommentError"></small></label>
+    </div>
+    <div class="dialog-actions"><button class="btn" data-close-reminder>Отмена</button><button class="btn primary" id="saveUniversalReminder">Создать напоминание</button></div>
+  </div></div>`)
+  const modal = document.querySelector('#universalReminderModal')
+  const close = () => modal.remove()
+  modal.querySelectorAll('[data-close-reminder]').forEach(button => button.onclick = close)
+  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  setupManualDate(modal, 'universalReminder')
+  setupManualTime(modal, 'universalReminder')
+  modal.querySelectorAll('[name="reminderTarget"]').forEach(radio => radio.onchange = () => modal.querySelector('#reminderContactMethod').classList.toggle('hidden', radio.value === 'doctor'))
+  modal.querySelector('#universalReminderComment').oninput = () => { modal.querySelector('#universalReminderCommentError').textContent = '' }
+  modal.querySelector('#saveUniversalReminder').onclick = () => {
+    const target = modal.querySelector('[name="reminderTarget"]:checked')?.value || 'patient'
+    const method = target === 'doctor' ? 'doctor' : modal.querySelector('[name="reminderMethod"]:checked')?.value || 'call'
+    const dueDate = readManualDate(modal, 'universalReminder')
+    const dueTime = readManualTime(modal, 'universalReminder')
+    const comment = modal.querySelector('#universalReminderComment').value.trim()
+    if (!dueDate || !dueTime) return
+    if (!comment) { modal.querySelector('#universalReminderCommentError').textContent = 'Комментарий обязателен'; return }
+    const title = target === 'doctor' ? '👨‍⚕️ Напоминание доктору' : method === 'write' ? '💬 Напоминание пациенту' : '📞 Напоминание пациенту'
+    const now = new Date().toISOString()
+    const task = createActionTask(patient, { type:'reminder', title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment, reminderTarget:target }, now)
+    task.reminderMethod = method
+    patient.updatedAt = now
+    patient.updatedBy = currentUser.name
+    patient.history ||= []
+    patient.history.unshift(createHistoryEntry('task', `${target === 'doctor' ? 'Создано напоминание доктору.' : 'Создано напоминание пациенту.'} ${formatDate(dueDate)} в ${dueTime}.`, { actionIcon:target === 'doctor' ? '👨‍⚕️' : method === 'write' ? '💬' : '📞', taskType:'reminder' }))
+    saveState(`Создано напоминание: ${patient.name}`)
+    modal.remove()
+    renderPatients()
+    showToast('Напоминание создано.')
+  }
+}
+
 function openPatientActionModal(patientId, action) {
   document.querySelector('#patientActionModal')?.remove()
   const patient = state.patients.find(item => item.id === patientId)
   const definition = PATIENT_ACTIONS.find(item => item.value === action)
   if (!patient || !definition) return
+  if (action === 'reminder') return openUniversalReminderModal(patient)
   const needsDate = ['call','reminder','thinking','invite_checkup','appointment'].includes(action)
   const needsTime = needsDate
   const needsDoctor = action === 'appointment'
@@ -2256,8 +2301,9 @@ function taskRow(task) {
 
 function taskExecutionKind(task) {
   if (isAppointmentConfirmationTask(task)) return 'confirmation'
+  if (task?.type === 'reminder') return 'reminder'
   const source = `${task?.type || ''} ${cleanTaskLabel(task?.title || '')}`.toLowerCase()
-  if (['call','reminder','decision'].includes(task?.type) || /позвон|звонок|напом|уточнить решение/.test(source)) return 'call'
+  if (['call','decision'].includes(task?.type) || /позвон|звонок|уточнить решение/.test(source)) return 'call'
   if (task?.type === 'write' || /сообщени|написать|whatsapp|telegram/.test(source)) return 'message'
   if (task?.type === 'request_image' || /снимок|рентген/.test(source)) return 'image'
   if (['postop_control','implant_check'].includes(task?.type) || /контрол/.test(source)) return 'control'
@@ -2267,7 +2313,7 @@ function taskExecutionKind(task) {
 function taskExecutionButton(task) {
   return ({
     confirmation:'✅ Подтвердить', call:'📞 Указать результат', message:'✉ Выполнить',
-    image:'🩻 Получить снимок', control:'🦷 Провести контроль', generic:'✔ Выполнить',
+    reminder:'🔔 Выполнить', image:'🩻 Получить снимок', control:'🦷 Провести контроль', generic:'✔ Выполнить',
   })[taskExecutionKind(task)]
 }
 
@@ -2276,7 +2322,69 @@ function openTaskExecution(taskId, options = {}) {
   if (!task || !isTaskActive(task)) return
   const kind = taskExecutionKind(task)
   if (kind === 'call' || kind === 'confirmation') return openCallResultModal(taskId, options)
+  if (kind === 'reminder') return openReminderResultModal(task, options)
   openSimpleTaskExecution(task, kind, options)
+}
+
+function openReminderResultModal(task, options = {}) {
+  const patient = state.patients.find(item => item.id === task.patientId)
+  if (!patient) return
+  document.querySelector('#reminderResultModal')?.remove()
+  const results = [
+    ['appointment','✅ Записали на приём'], ['plan','✅ Определились с планом лечения'], ['plan_sent','✅ План лечения отправлен'],
+    ['called','✅ Позвонили пациенту'], ['written','✅ Написали пациенту'], ['doctor','✅ Доктору напомнили'],
+    ['postponed','⏳ Отложили'], ['repeat','🔁 Напомнить ещё раз'], ['other','✏️ Другое'],
+  ]
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="reminderResultModal"><div class="dialog reminder-result-dialog" role="dialog" aria-modal="true" aria-labelledby="reminderResultTitle">
+    <div class="dialog-head"><div><h2 id="reminderResultTitle">Чем закончилось напоминание?</h2><p>${esc(patient.name)} · ${esc(task.note || task.comment || '')}</p></div><button class="icon-btn" data-close-reminder-result>×</button></div>
+    <div class="call-result-options reminder-result-options">${results.map(([value,label]) => `<label><input type="radio" name="reminderResult" value="${value}"> <span>${label}</span></label>`).join('')}</div>
+    <section class="hidden reminder-repeat-fields" id="reminderRepeatFields"><h3 class="call-result-step">Новая дата напоминания</h3><div class="custom-datetime-grid">${manualDateMarkup('reminderRepeat', 'Новая дата', localDatePlus(1))}${manualTimeMarkup('reminderRepeat', 'Новое время', '10:00')}</div></section>
+    <label class="field call-result-comment"><span>Комментарий</span><textarea id="reminderResultComment" placeholder="Для варианта «Другое» комментарий обязателен"></textarea><small class="form-error" id="reminderResultError"></small></label>
+    <div class="dialog-actions"><button class="btn" data-close-reminder-result>Отмена</button><button class="btn primary" id="saveReminderResult" disabled>Сохранить</button></div>
+  </div></div>`)
+  const modal = document.querySelector('#reminderResultModal')
+  const close = () => modal.remove()
+  modal.querySelectorAll('[data-close-reminder-result]').forEach(button => button.onclick = close)
+  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  setupManualDate(modal, 'reminderRepeat')
+  setupManualTime(modal, 'reminderRepeat')
+  const saveButton = modal.querySelector('#saveReminderResult')
+  modal.querySelectorAll('[name="reminderResult"]').forEach(radio => radio.onchange = () => {
+    modal.querySelector('#reminderRepeatFields').classList.toggle('hidden', !['repeat','postponed'].includes(radio.value))
+    modal.querySelector('#reminderResultError').textContent = ''
+    saveButton.disabled = false
+  })
+  modal.querySelector('#reminderResultComment').oninput = () => { modal.querySelector('#reminderResultError').textContent = '' }
+  saveButton.onclick = () => {
+    const result = modal.querySelector('[name="reminderResult"]:checked')?.value
+    const comment = modal.querySelector('#reminderResultComment').value.trim()
+    if (!result) return
+    if (result === 'other' && !comment) { modal.querySelector('#reminderResultError').textContent = 'Опишите результат'; return }
+    const now = new Date().toISOString()
+    const resultLabels = { appointment:'Пациент записан на приём', plan:'Определились с планом лечения', plan_sent:'План лечения отправлен', called:'Пациенту позвонили', written:'Пациенту написали', doctor:'Доктор уведомлён', other:comment }
+    if (['repeat','postponed'].includes(result)) {
+      const dueDate = readManualDate(modal, 'reminderRepeat')
+      const dueTime = readManualTime(modal, 'reminderRepeat')
+      if (!dueDate || !dueTime) return
+      completeTaskRecord(task, now, result === 'repeat' ? 'Напомнить ещё раз' : 'Отложили', comment)
+      const inheritedComment = [task.note || task.comment || '', comment].filter(Boolean).join(' ')
+      const nextTask = createActionTask(patient, { type:'reminder', title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient' }, now)
+      nextTask.reminderMethod = task.reminderMethod || (task.reminderTarget === 'doctor' ? 'doctor' : 'call')
+      patient.history ||= []
+      patient.history.unshift(createHistoryEntry('task', `Напоминание перенесено на ${formatDate(dueDate)} ${dueTime}.`, { actionIcon:'🔁', taskType:'reminder' }))
+    } else {
+      const resultText = resultLabels[result]
+      completeTaskRecord(task, now, resultText, comment)
+      patient.history ||= []
+      patient.history.unshift(createHistoryEntry('task_completed', `Напоминание выполнено. ${resultText}${/[.!?]$/.test(resultText) ? '' : '.'}`, { actionIcon:'🔔', taskType:'reminder' }))
+    }
+    patient.updatedAt = now
+    patient.updatedBy = currentUser.name
+    saveState(result === 'repeat' || result === 'postponed' ? `Перенесено напоминание: ${patient.name}` : `Выполнено напоминание: ${patient.name}`)
+    modal.remove()
+    finishCallResult(options)
+    showToast(result === 'repeat' || result === 'postponed' ? 'Создано новое напоминание.' : 'Напоминание выполнено.')
+  }
 }
 
 function completeSimpleTask(task, patient, result, comment, options) {
