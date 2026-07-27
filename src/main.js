@@ -2240,6 +2240,7 @@ function openUpcomingTasksModal() {
 
 function renderTasks() {
   const content = document.querySelector('#content')
+  taskFilters.assignee = 'all'
   const today = todayISO()
   const tomorrow = localDatePlus(1)
   const matchesAdditionalFilters = task => {
@@ -2273,7 +2274,6 @@ function renderTasks() {
     <div class="task-extra-filters">
       <label class="task-search-control"><span>Поиск пациента</span><div><input id="taskPatientSearch" value="${esc(taskSearchText)}" placeholder="Поиск по пациенту или телефону"><button type="button" id="clearTaskSearch" class="${taskSearchText ? '' : 'hidden'}" aria-label="Очистить поиск">×</button></div></label>
       <label><span>Тип задачи</span><select id="taskTypeFilter">${taskFilterOptions([['all','Все типы'],['call','Звонок'],['reminder','Напоминание'],['decision','Уточнить решение'],['confirmation','Подтверждение приёма'],['message','Сообщение'],['image','Запрос снимка'],['control','Послеоперационный контроль'],['checkup','Профосмотр'],['other','Другое']], taskFilters.type)}</select></label>
-      <label><span>Ответственный</span><select id="taskAssigneeFilter">${taskFilterOptions([['all','Все ответственные'], ...USERS.map(user => [user.name,user.name]), ['unassigned','Не назначен']], taskFilters.assignee)}</select></label>
       <label><span>Состояние</span><select id="taskStateFilter">${taskFilterOptions([['active','Активные'],['completed','Выполненные'],['all','Все']], taskFilters.state)}</select></label>
       <button type="button" class="btn all-tasks-filter ${activeTaskFilter === 'all' ? 'active' : ''}" id="showAllTasks">Все задачи</button>
       ${anyFiltersChanged ? '<button type="button" class="btn reset-task-filters" id="resetTaskFilters">Сбросить фильтры</button>' : ''}
@@ -2286,7 +2286,7 @@ function renderTasks() {
   document.querySelector('#newTask').onclick = () => openTaskModal()
   setupTaskNavigation(content)
   document.querySelector('#showAllTasks').onclick = () => { activeTaskFilter = 'all'; taskFilters.deadline = 'all'; saveTaskFilters(); renderTasks() }
-  ;[['#taskTypeFilter','type'],['#taskAssigneeFilter','assignee'],['#taskStateFilter','state']].forEach(([selector,key]) => document.querySelector(selector).onchange = event => { taskFilters[key] = event.target.value; saveTaskFilters(); renderTasks() })
+  ;[['#taskTypeFilter','type'],['#taskStateFilter','state']].forEach(([selector,key]) => document.querySelector(selector).onchange = event => { taskFilters[key] = event.target.value; saveTaskFilters(); renderTasks() })
   const searchInput = document.querySelector('#taskPatientSearch')
   searchInput.oninput = event => { taskSearchText = event.target.value; renderTasks(); requestAnimationFrame(() => { const input = document.querySelector('#taskPatientSearch'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length) }) }
   document.querySelector('#clearTaskSearch')?.addEventListener('click', () => { taskSearchText = ''; renderTasks(); requestAnimationFrame(() => document.querySelector('#taskPatientSearch')?.focus()) })
