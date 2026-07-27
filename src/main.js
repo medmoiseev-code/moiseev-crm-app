@@ -65,10 +65,10 @@ const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
 const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
 const PATIENT_FILTERS_KEY = 'moiseev_admin_crm_patient_filters_v01'
 const PATIENT_COLUMNS = [
-  { key: 'name', width: 220 }, { key: 'addTask', width: 105 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
+  { key: 'name', width: 220 }, { key: 'addTask', width: 190 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
   { key: 'appointmentDate', width: 130 },
   { key: 'status', width: 190 }, { key: 'adminNote', width: 285 },
-  { key: 'history', width: 470 },
+  { key: 'history', width: 470 }, { key: 'actions', width: 82 },
 ]
 
 const app = document.querySelector('#app')
@@ -322,9 +322,7 @@ function compactTaskLabel(task) {
 }
 
 function patientStageTaskMarkup(patient) {
-  const task = nearestActiveTask(patient.id)
-  const taskLine = task ? `<button type="button" class="patient-next-task ${isTaskOverdue(task) ? 'overdue' : ''}" data-next-patient-task="${task.id}" title="${esc(task.comment || task.note || task.title || compactTaskLabel(task))}"><span>${esc(compactTaskLabel(task))}</span> · <time>${esc(compactTaskDue(task))}</time></button>` : ''
-  return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>${taskLine}`
+  return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>`
 }
 
 function isValidTime(value) {
@@ -972,6 +970,7 @@ function loadPatientTableSettings() {
       if (Number.isFinite(width)) widths[key] = Math.max(70, Math.min(800, width))
     }
     if (widths.history === 360) widths.history = 450
+    if (widths.addTask === 105) widths.addTask = 190
     if (saved.rowHeights && typeof saved.rowHeights === 'object' && !Array.isArray(saved.rowHeights)) {
       for (const [patientId, savedHeight] of Object.entries(saved.rowHeights)) {
         const height = Number(savedHeight)
@@ -1291,16 +1290,17 @@ function renderPatients() {
         <table class="patient-table">
           <thead><tr>
             <th>${patientHeaderSortButton('name', 'ФИО')}</th>
-            <th>${patientHeaderSortButton('addTask', '+ Задача', 'Сортировать по ближайшей задаче')}</th>
+            <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
             <th>${patientHeaderSortButton('createdAt', 'Дата создания')}</th>
             <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
             <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
             <th>Примечание</th>
             <th>${patientHeaderSortButton('history', 'История')}</th>
+            <th>Действия</th>
           </tr></thead>
           <tbody>
-            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="8">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
+            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="9">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1367,6 +1367,16 @@ function renderPatients() {
       openPatientActionModal(button.dataset.patientId, button.dataset.patientAction)
     })
   })
+  document.querySelectorAll('[data-patient-comment-action]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation()
+    button.closest('[data-action-menu]')?.classList.add('hidden')
+    openQuickCommentModal(button.dataset.patientCommentAction)
+  }))
+  document.querySelectorAll('[data-patient-task-action]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation()
+    button.closest('[data-action-menu]')?.classList.add('hidden')
+    openTaskModal(null, button.dataset.patientId, button.dataset.patientTaskAction)
+  }))
   setupTaskNavigation(content)
 }
 
@@ -1536,17 +1546,22 @@ function setupPatientDates(root) {
 }
 
 function patientRow(patient) {
-  const tasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
+  const tasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task)).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
+  const nearestTask = tasks[0]
+  const taskCell = nearestTask
+    ? `<button type="button" class="nearest-task-cell ${isTaskOverdue(nearestTask) ? 'overdue' : ''}" data-patient-tasks="${patient.id}"><time>${esc(formatTaskDue(nearestTask))}</time><strong>${esc(compactTaskLabel(nearestTask))}</strong>${tasks.length > 1 ? `<small>+${tasks.length - 1} ${taskWord(tasks.length - 1)}</small>` : ''}</button>`
+    : '<span class="no-active-tasks">Нет активных задач</span>'
   return `
     <tr data-patient="${patient.id}">
       <td><button type="button" class="patient-name-btn" data-open-patient="${patient.id}"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong><small>${esc((patient.phones || []).join(' · '))}</small></button><button type="button" class="patient-edit-btn" data-open-patient="${patient.id}">Открыть карточку</button></td>
-      <td><button class="btn primary row-task-btn" data-patient-tasks="${patient.id}">${tasks.length ? `Задача · ${tasks.length}` : '+ Задача'}</button></td>
+      <td>${taskCell}</td>
       <td>${formatDate(patient.createdAt)}</td>
       <td>${esc((patient.doctors || []).join(', ') || '—')}</td>
       <td>${formatDate(patient.appointmentDate)}</td>
-      <td class="patient-action-cell">${patientStageTaskMarkup(patient)}<div class="patient-action-menu-wrap"><button type="button" class="btn patient-action-button" data-action-menu-toggle aria-expanded="false">➕ Новое действие</button><div class="patient-action-menu hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label}</button>`).join('')}</div></div></td>
+      <td>${patientStageTaskMarkup(patient)}</td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
+      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
     </tr>
   `
 }
@@ -2896,10 +2911,11 @@ function finishCallResult(options) {
   if (options.taskListModal === 'upcoming') openUpcomingTasksModal()
 }
 
-function openTaskModal(taskId = null, presetPatientId = null) {
+function openTaskModal(taskId = null, presetPatientId = null, presetType = null) {
   const original = state.tasks.find(task => task.id === taskId)
+  const presetTask = TASK_TYPES.find(item => item.value === presetType)
   const task = original ? cloneData(original) : {
-    id: uid(), patientId: presetPatientId || '', type: 'call', title: 'Позвонить пациенту',
+    id: uid(), patientId: presetPatientId || '', type: presetTask?.value || 'call', title: presetTask?.label || 'Позвонить пациенту',
     dueDate: todayISO(), assignee: currentUser.role === 'admin' ? currentUser.name : 'Елизавета',
     note: '', status: 'active', completedAt: null, createdAt: new Date().toISOString(), createdBy: currentUser.name,
   }
