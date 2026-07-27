@@ -204,7 +204,7 @@ html{font-size:calc(16px * var(--ui-scale,1))}body{background:var(--color-bg,#0b
 @media(max-width:760px){.task-navigation{grid-template-columns:repeat(2,minmax(0,1fr))!important}.task-navigation .task-summary-tab>span,.task-navigation .task-summary-tab>span>b{font-size:13px!important}}
 
 /* Единая сетка строк в общем списке задач */
-.task-list .task-row{grid-template-columns:72px minmax(240px,1.4fr) minmax(180px,1fr) 150px 190px;align-items:center;min-height:76px}
+.task-list .task-row{grid-template-columns:72px minmax(220px,1fr) minmax(280px,1.4fr) 150px 190px;align-items:center;min-height:76px}
 .task-list .task-row>*{min-width:0}.task-list .task-date{align-self:stretch;display:grid;align-content:center}.task-list .task-main strong,.task-list .task-main span,.task-list .task-main small,.task-list .task-patient b,.task-list .task-patient span,.task-list .task-owner b,.task-list .task-owner span,.task-list .task-result b,.task-list .task-result span,.task-list .task-result small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-list .process-task-btn{width:100%;height:40px;padding:0 8px}.task-list .task-result{width:100%}
 
 /* Универсальное напоминание */

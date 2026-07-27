@@ -2342,8 +2342,8 @@ function taskRow(task) {
   const overdue = isTaskOverdue(task)
   return `<article class="task-row ${overdue ? 'overdue' : ''}" data-task="${task.id}">
     <div class="task-date"><b>${task.dueAt ? task.dueAt.slice(11, 16) : formatDate(task.dueDate).slice(0, 5)}</b><span>${task.dueAt && task.dueDate === todayISO() ? 'сегодня' : formatDate(task.dueDate)}</span></div>
-    <div class="task-main"><span>${esc(taskTypeDisplay(task))}</span><strong>${esc(task.title)}</strong><small>${esc(task.note || '')}</small></div>
     <div class="task-patient"><b>${esc(patient?.name || 'Пациент удалён')} ${specialNoteBadge(patient)}</b><span>${esc(patient?.phones?.[0] || '')}</span></div>
+    <div class="task-main"><span>${esc(taskTypeDisplay(task))}</span><strong>${esc(task.title)}</strong><small>${esc(task.note || '')}</small></div>
     <div class="task-owner"><b>${esc(task.assignee || '—')}</b><span>${isTaskActive(task) ? 'Активна' : isTaskCompleted(task) ? 'Выполнена' : 'Отменена'}</span></div>
     ${isTaskActive(task) ? `<button class="process-task-btn" data-process-task="${task.id}">${taskExecutionButton(task)}</button>` : `<div class="task-result"><b>${formatDateTime(task.completedAt)}</b><span>${esc(task.completedBy || '—')}</span>${task.lastResult ? `<small>${esc(task.lastResult)}</small>` : ''}${task.lastResultComment ? `<small>${esc(task.lastResultComment)}</small>` : ''}</div>`}
   </article>`
