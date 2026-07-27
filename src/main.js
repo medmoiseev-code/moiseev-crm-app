@@ -1717,9 +1717,7 @@ function openHistoryModal(patientId) {
 
 function specialNoteCardMarkup(patient, savedPatient) {
   const note = String(patient.specialNote || '').trim()
-  if (!savedPatient) return `<section class="special-note-card"><div class="special-note-heading"><strong>${specialNoteBadge({ specialNote:'Особое примечание' }, 'static')} Особое примечание</strong></div><label class="field special-note-editor"><textarea id="pSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="pSpecialNoteCounter">0</span>/200 · Только короткая важная информация</small></label></section>`
-  if (!note) return `<section class="special-note-card"><button type="button" class="special-note-add" data-edit-special-note="${patient.id}">+ Добавить особое примечание</button></section>`
-  return `<section class="special-note-card has-note"><div class="special-note-heading"><strong>${specialNoteBadge(patient, 'static')} Особое примечание</strong><span>${esc(patient.specialNoteUpdatedBy || '')}</span></div><p data-clamped-content>${esc(note)}</p><div class="special-note-actions"><button type="button" class="btn" data-toggle-clamped>Развернуть</button><button type="button" class="btn" data-edit-special-note="${patient.id}">Редактировать</button><button type="button" class="btn danger-text" data-delete-special-note="${patient.id}">Удалить</button></div></section>`
+  return `<section class="special-note-card ${note ? 'has-note' : ''}"><div class="special-note-heading"><strong>${specialNoteBadge({ specialNote:'Особое примечание' }, 'static')} Особое примечание</strong></div><label class="field special-note-editor"><textarea id="pSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация">${esc(note)}</textarea><small><span id="pSpecialNoteCounter">${note.length}</span>/200 · Только короткая важная информация</small></label></section>`
 }
 
 function openSpecialNoteModal(patientId) {
@@ -1793,7 +1791,7 @@ function openPatientModal(patientId = null) {
           <section><label class="field"><span>Этап пациента</span><input id="pStatus" value="${esc(normalizePatientStatus(patient.status))}" readonly title="Статус изменяется через мастер действий в таблице"></label>${original ? `<div class="patient-summary-item"><span>Ближайшая активная задача</span><b>${nearestTask ? esc(compactTaskLabel(nearestTask)) : '—'}</b><small>${nearestTask ? esc(formatTaskDue(nearestTask)) : 'Нет активных задач'}</small></div>` : ''}<div class="patient-appointment-fields">${manualDateMarkup('pAppointment', 'Дата приёма', patient.appointmentDate || '')}${manualTimeMarkup('pAppointment', 'Время приёма', patient.appointmentAt?.slice(11, 16) || (patient.appointmentDate ? '10:00' : ''))}</div><div class="patient-summary-item"><span>Дата создания пациента</span><b>${formatDate(patient.createdAt)}</b></div></section>
         </div>
         ${original ? `<section class="patient-card-section active-tasks-section"><div class="compact-section-head"><h3>Активные задачи · ${activePatientTasks.length}</h3><button class="btn" id="addTaskBtn">+ Задача</button></div><div class="compact-task-list">${activePatientTasks.length ? activePatientTasks.slice(0,3).map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Активных задач нет</div>'}</div>${activePatientTasks.length > 3 ? `<details class="more-patient-tasks"><summary>Показать все · ${activePatientTasks.length}</summary><div class="compact-task-list">${activePatientTasks.slice(3).map(compactPatientTaskMarkup).join('')}</div></details>` : ''}</section>` : ''}
-        <section class="patient-card-section compact-comment-section"><div class="compact-section-head"><h3>Примечание</h3>${original ? '<button type="button" class="text-action" data-toggle-admin-comment>+ Добавить примечание</button>' : ''}</div>${original ? `<div class="clamped-text ${patient.adminNote ? '' : 'empty'}">${patient.adminNote ? esc(patient.adminNote) : 'Примечаний пока нет'}</div>` : ''}<label class="field ${original ? 'hidden' : ''}" data-admin-editor><textarea id="pNewNote" placeholder="Введите примечание"></textarea></label>${original ? '<button type="button" class="text-action all-comments-link" data-open-comments-history>Все примечания</button>' : ''}</section>
+        <section class="patient-card-section compact-comment-section"><div class="compact-section-head"><h3>Примечание</h3></div><label class="field" data-admin-editor><textarea id="pNewNote" placeholder="Введите примечание">${esc(patient.adminNote || '')}</textarea></label>${original ? '<button type="button" class="text-action all-comments-link" data-open-comments-history>История примечаний</button>' : ''}</section>
         ${specialNoteCardMarkup(patient, original)}
         <details class="patient-card-section completed-tasks-section"><summary>Выполненные задачи · ${completedPatientTasks.length}</summary><div class="compact-task-list">${completedPatientTasks.length ? completedPatientTasks.map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Выполненных задач нет</div>'}</div></details>
         <section class="patient-card-section compact-history-section"><div class="compact-section-head"><h3>История · ${patientHistory.length} записей</h3><button type="button" class="text-action" data-open-full-history>Открыть всю историю</button></div><div class="history-list">${patientHistory.length ? patientHistory.slice(0,4).map(item => historyEntryMarkup(item, true)).join('') : '<div class="compact-empty">История пока пустая</div>'}</div></section>
@@ -1839,7 +1837,7 @@ function openPatientModal(patientId = null) {
     const duplicate = state.patients.find(p => p.id !== patient.id && (p.name || '').trim().toLowerCase() === name.toLowerCase())
     if (duplicate && !confirm(`Пациент «${duplicate.name}» уже есть в базе. Всё равно сохранить ещё одну карточку?`)) return
     const note = modal.querySelector('#pNewNote').value.trim()
-    const initialSpecialNote = modal.querySelector('#pSpecialNote')?.value.trim() || ''
+    const specialNote = modal.querySelector('#pSpecialNote')?.value.trim() || ''
     const appointmentDate = readManualDate(modal, 'pAppointment', false)
     if (appointmentDate === null) return
     const appointmentTime = appointmentDate ? readManualTime(modal, 'pAppointment') : readManualTime(modal, 'pAppointment', false)
@@ -1855,15 +1853,18 @@ function openPatientModal(patientId = null) {
     patient.updatedAt = new Date().toISOString()
     patient.updatedBy = currentUser.name
     patient.history ||= []
-    if (!original && initialSpecialNote) {
-      patient.specialNote = initialSpecialNote
+    const previousSpecialNote = String(original?.specialNote || '').trim()
+    if (specialNote !== previousSpecialNote) {
+      const specialNoteVerb = !previousSpecialNote ? 'Добавлено' : !specialNote ? 'Удалено' : 'Изменено'
+      patient.specialNote = specialNote
       patient.specialNoteUpdatedBy = currentUser.name
       patient.specialNoteUpdatedAt = patient.updatedAt
-      patient.history.unshift(createHistoryEntry('special_note', `Добавлено особое примечание: «${initialSpecialNote}».`, { actionIcon:'!', oldValue:'', newValue:initialSpecialNote }))
+      patient.history.unshift(createHistoryEntry('special_note', `${specialNoteVerb} особое примечание${specialNoteVerb === 'Добавлено' ? `: «${specialNote}».` : '.'}`, { actionIcon:'!', oldValue:previousSpecialNote, newValue:specialNote }))
     }
-    if (note) {
+    const previousNote = String(original?.adminNote || '').trim()
+    if (note !== previousNote) {
       patient.adminNote = note
-      patient.history.unshift(createHistoryEntry('admin_comment', note))
+      patient.history.unshift(createHistoryEntry('admin_comment', note || 'Примечание удалено.'))
     }
     const currentData = JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, appointmentDate: patient.appointmentDate, status: patient.status })
     if (!original) patient.history.unshift(createHistoryEntry('system', 'Создана карточка пациента'))
