@@ -1824,6 +1824,7 @@ function openPatientModal(patientId = null) {
     if (appointmentDate === null) return
     const appointmentTime = appointmentDate ? readManualTime(modal, 'pAppointment') : readManualTime(modal, 'pAppointment', false)
     if (appointmentTime === null) return
+    const appointmentChanged = Boolean(appointmentDate) && (!original || original.appointmentDate !== appointmentDate || (original.appointmentAt?.slice(11, 16) || '') !== appointmentTime)
     const previousData = original ? JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, appointmentDate: patient.appointmentDate, status: patient.status }) : null
     patient.name = name
     patient.phones = [phone1, modal.querySelector('#pPhone2').value.trim()].filter(Boolean)
@@ -1849,8 +1850,31 @@ function openPatientModal(patientId = null) {
     else if (previousData !== currentData) patient.history.unshift(createHistoryEntry('system', 'Изменены данные пациента'))
     if (original) Object.assign(original, patient)
     else state.patients.push(patient)
+    if (appointmentChanged) {
+      const deadline = appointmentConfirmationDeadline(appointmentDate)
+      const existingConfirmation = state.tasks.find(task => task.patientId === patient.id && isTaskActive(task) && isAppointmentConfirmationTask(task))
+      if (existingConfirmation) {
+        existingConfirmation.dueDate = deadline.dueDate
+        existingConfirmation.dueAt = deadline.dueAt
+        existingConfirmation.note = `Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`
+        existingConfirmation.comment = existingConfirmation.note
+        existingConfirmation.confirmationAppointmentDate = appointmentDate
+        existingConfirmation.updatedAt = patient.updatedAt
+        existingConfirmation.updatedBy = currentUser.name
+      } else {
+        const confirmationTask = createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}` }, patient.updatedAt)
+        confirmationTask.confirmationAppointmentDate = appointmentDate
+        patient.history.unshift(createHistoryEntry('task', `Создана задача подтверждения записи на ${formatDate(deadline.dueDate)}.`, { actionIcon:'📞', taskType:'call' }))
+      }
+    }
     saveState(original ? `Изменена карточка: ${patient.name}` : `Создан пациент: ${patient.name}`)
     modal.remove()
+    if (!original) {
+      patientFilters = { name:'', doctor:'', status:'', group:'all', taskDue:'all' }
+      savePatientFilters()
+      patientSort = 'createdDesc'
+      localStorage.setItem(PATIENT_SORT_KEY, patientSort)
+    }
     renderPatients()
   }
 }
