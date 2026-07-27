@@ -1379,6 +1379,10 @@ function setupPatientFilters(root) {
   root.querySelectorAll('[data-patient-status]').forEach(button => button.addEventListener('click', () => {
     patientFilters.status = button.dataset.patientStatus
     patientFilters.group = 'all'
+    if (!patientFilters.status) {
+      patientSort = 'createdDesc'
+      localStorage.setItem(PATIENT_SORT_KEY, patientSort)
+    }
     savePatientFilters()
     renderPatients()
   }))
