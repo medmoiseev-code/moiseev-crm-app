@@ -1697,7 +1697,7 @@ function openHistoryModal(patientId) {
 
 function specialNoteCardMarkup(patient, savedPatient) {
   const note = String(patient.specialNote || '').trim()
-  if (!savedPatient) return `<section class="special-note-card"><div class="special-note-heading"><strong>${specialNoteBadge({ specialNote:'Особое примечание' }, 'static')} Особое примечание</strong></div><small>Сначала сохраните карточку пациента, затем добавьте особое примечание.</small></section>`
+  if (!savedPatient) return `<section class="special-note-card"><div class="special-note-heading"><strong>${specialNoteBadge({ specialNote:'Особое примечание' }, 'static')} Особое примечание</strong></div><label class="field special-note-editor"><textarea id="pSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="pSpecialNoteCounter">0</span>/200 · Только короткая важная информация</small></label></section>`
   if (!note) return `<section class="special-note-card"><button type="button" class="special-note-add" data-edit-special-note="${patient.id}">+ Добавить особое примечание</button></section>`
   return `<section class="special-note-card has-note"><div class="special-note-heading"><strong>${specialNoteBadge(patient, 'static')} Особое примечание</strong><span>${esc(patient.specialNoteUpdatedBy || '')}</span></div><p data-clamped-content>${esc(note)}</p><div class="special-note-actions"><button type="button" class="btn" data-toggle-clamped>Развернуть</button><button type="button" class="btn" data-edit-special-note="${patient.id}">Редактировать</button><button type="button" class="btn danger-text" data-delete-special-note="${patient.id}">Удалить</button></div></section>`
 }
@@ -1799,6 +1799,7 @@ function openPatientModal(patientId = null) {
     event.currentTarget.textContent = editor.classList.contains('hidden') ? '+ Добавить комментарий' : 'Свернуть'
     if (!editor.classList.contains('hidden')) editor.querySelector('textarea').focus()
   })
+  modal.querySelector('#pSpecialNote')?.addEventListener('input', event => { modal.querySelector('#pSpecialNoteCounter').textContent = event.target.value.length })
   modal.querySelectorAll('[data-open-comments-history],[data-open-full-history]').forEach(button => button.onclick = () => openHistoryModal(patient.id))
   modal.querySelectorAll('[data-toggle-clamped]').forEach(button => button.onclick = () => {
     const section = button.closest('.patient-card-section,.special-note-card')
@@ -1818,6 +1819,7 @@ function openPatientModal(patientId = null) {
     const duplicate = state.patients.find(p => p.id !== patient.id && (p.name || '').trim().toLowerCase() === name.toLowerCase())
     if (duplicate && !confirm(`Пациент «${duplicate.name}» уже есть в базе. Всё равно сохранить ещё одну карточку?`)) return
     const note = modal.querySelector('#pNewNote').value.trim()
+    const initialSpecialNote = modal.querySelector('#pSpecialNote')?.value.trim() || ''
     const appointmentDate = readManualDate(modal, 'pAppointment', false)
     if (appointmentDate === null) return
     const appointmentTime = appointmentDate ? readManualTime(modal, 'pAppointment') : readManualTime(modal, 'pAppointment', false)
@@ -1832,6 +1834,12 @@ function openPatientModal(patientId = null) {
     patient.updatedAt = new Date().toISOString()
     patient.updatedBy = currentUser.name
     patient.history ||= []
+    if (!original && initialSpecialNote) {
+      patient.specialNote = initialSpecialNote
+      patient.specialNoteUpdatedBy = currentUser.name
+      patient.specialNoteUpdatedAt = patient.updatedAt
+      patient.history.unshift(createHistoryEntry('special_note', `Добавлено особое примечание: «${initialSpecialNote}».`, { actionIcon:'!', oldValue:'', newValue:initialSpecialNote }))
+    }
     if (note) {
       patient.adminNote = note
       patient.history.unshift(createHistoryEntry('admin_comment', note))
