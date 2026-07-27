@@ -201,6 +201,7 @@ html{font-size:calc(16px * var(--ui-scale,1))}body{background:var(--color-bg,#0b
 
 /* Общая постоянная навигация по срокам задач */
 .task-navigation{grid-template-columns:repeat(4,minmax(0,1fr))!important;overflow:visible}.task-navigation .task-summary-tab{width:100%;height:58px;min-height:58px}.task-navigation .task-summary-tab.active{outline:2px solid var(--blue);outline-offset:-3px;background:var(--blue-soft)}.all-tasks-filter{height:34px!important;white-space:nowrap}.all-tasks-filter.active{border-color:var(--blue);background:var(--blue-soft);color:var(--blue)}.task-category-description{margin:0 0 10px;color:var(--muted);font-size:13px}.task-category-description strong{color:var(--text)}
+.task-navigation .task-tab-today.active{outline-color:#e58b3b;background:#e58b3b24}.task-navigation .task-tab-tomorrow.active{outline-color:#d8b83e;background:#d8b83e24}.task-navigation .task-tab-upcoming.active{outline-color:#45a66f;background:#45a66f24}.task-navigation .task-tab-overdue.active{outline-color:#d65361;background:#d6536124}
 @media(max-width:760px){.task-navigation{grid-template-columns:repeat(2,minmax(0,1fr))!important}.task-navigation .task-summary-tab>span,.task-navigation .task-summary-tab>span>b{font-size:13px!important}}
 
 /* Единая сетка строк в общем списке задач */
