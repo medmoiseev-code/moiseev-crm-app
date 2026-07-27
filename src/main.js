@@ -764,7 +764,10 @@ function patientMatchesFilters(patient) {
     || (patientFilters.taskDue === 'upcoming' && getUpcomingActiveTasks(activeTasks).length > 0)
   return (!query || identityValues.some(value => value.includes(query) || (phoneQuery && normalizePhone(value).includes(phoneQuery))))
     && (!patientFilters.doctor || (patient.doctors || []).includes(patientFilters.doctor))
-    && (!patientFilters.status || normalizePatientStatus(patient.status) === normalizePatientStatus(patientFilters.status))
+    && (!patientFilters.status
+      || (patientFilters.status === 'refusal_or_dnc'
+        ? ['❌ Отказ', '🚫 Не звонить'].includes(normalizePatientStatus(patient.status))
+        : normalizePatientStatus(patient.status) === normalizePatientStatus(patientFilters.status)))
     && patientMatchesGroup(patient, patientFilters.group)
     && matchesTaskDue
 }
@@ -1290,7 +1293,7 @@ function renderPatients() {
             <th>${patientHeaderSortButton('createdAt', 'Дата создания')}</th>
             <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
-            <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
+            <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
             <th>Примечание</th>
             <th>${patientHeaderSortButton('history', 'История')}</th>
           </tr></thead>
@@ -1367,7 +1370,7 @@ function renderPatients() {
 
 function patientGroupFilterMarkup() {
   const statusValue = label => STATUS_OPTIONS.find(value => normalizePatientStatus(value) === label) || ''
-  const groups = [['','Все пациенты'],[statusValue('🆕 Новый'),'Новые'],[statusValue('📅 Записан на приём'),'Записаны'],[statusValue('🔄 Профосмотр'),'Профосмотр'],[statusValue('❌ Отказ'),'Отказы']]
+  const groups = [['','Все пациенты'],[statusValue('🆕 Новый'),'Новые'],[statusValue('📅 Записан на приём'),'Записаны'],[statusValue('🔄 Профосмотр'),'Профосмотр'],['refusal_or_dnc','Отказы']]
   return `<nav class="patient-group-filters" aria-label="Быстрый выбор этапа пациента">${groups.map(([value,label]) => `<button class="filter-btn ${patientFilters.status === value ? 'active' : ''}" data-patient-status="${esc(value)}">${label}</button>`).join('')}</nav>`
 }
 
