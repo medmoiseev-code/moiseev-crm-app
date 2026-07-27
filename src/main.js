@@ -2621,7 +2621,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     patient.updatedBy = currentUser.name
     saveState(`Обработано подтверждение приёма: ${patient.name}`)
     modal.remove()
-    finishCallResult(options)
+    finishCallResult({ ...options, drawerPatientId:null })
     showToast('Результат подтверждения сохранён.')
   }
 }
