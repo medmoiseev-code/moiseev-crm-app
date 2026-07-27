@@ -65,10 +65,9 @@ const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
 const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
 const PATIENT_FILTERS_KEY = 'moiseev_admin_crm_patient_filters_v01'
 const PATIENT_COLUMNS = [
-  { key: 'name', width: 220 }, { key: 'addTask', width: 190 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
-  { key: 'appointmentDate', width: 130 },
-  { key: 'status', width: 190 }, { key: 'adminNote', width: 285 },
-  { key: 'history', width: 470 }, { key: 'actions', width: 82 },
+  { key: 'name', width: 220 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 }, { key: 'appointmentDate', width: 130 },
+  { key: 'status', width: 190 }, { key: 'addTask', width: 190 }, { key: 'actions', width: 82 },
+  { key: 'adminNote', width: 285 }, { key: 'history', width: 470 },
 ]
 
 const app = document.querySelector('#app')
@@ -963,6 +962,11 @@ function loadPatientTableSettings() {
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Неверный формат настроек таблицы')
     const savedOrder = Array.isArray(saved.order) ? saved.order.filter(key => defaultOrder.includes(key)) : []
     const order = [...new Set([...savedOrder, ...defaultOrder])]
+    const taskIndex = order.indexOf('addTask')
+    if (taskIndex >= 0) order.splice(taskIndex, 1)
+    const actionsIndex = order.indexOf('actions')
+    if (actionsIndex >= 0) order.splice(actionsIndex, 1)
+    order.splice(order.indexOf('status') + 1, 0, 'addTask', 'actions')
     const widths = { ...defaultWidths }
     const rowHeights = {}
     for (const key of defaultOrder) {
@@ -1290,14 +1294,14 @@ function renderPatients() {
         <table class="patient-table">
           <thead><tr>
             <th>${patientHeaderSortButton('name', 'ФИО')}</th>
-            <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
             <th>${patientHeaderSortButton('createdAt', 'Дата создания')}</th>
             <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
             <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
+            <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
+            <th>Действия</th>
             <th>Примечание</th>
             <th>${patientHeaderSortButton('history', 'История')}</th>
-            <th>Действия</th>
           </tr></thead>
           <tbody>
             ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="9">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
@@ -1554,14 +1558,14 @@ function patientRow(patient) {
   return `
     <tr data-patient="${patient.id}">
       <td><button type="button" class="patient-name-btn" data-open-patient="${patient.id}"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong><small>${esc((patient.phones || []).join(' · '))}</small></button><button type="button" class="patient-edit-btn" data-open-patient="${patient.id}">Открыть карточку</button></td>
-      <td>${taskCell}</td>
       <td>${formatDate(patient.createdAt)}</td>
       <td>${esc((patient.doctors || []).join(', ') || '—')}</td>
       <td>${formatDate(patient.appointmentDate)}</td>
       <td>${patientStageTaskMarkup(patient)}</td>
+      <td>${taskCell}</td>
+      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
-      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
     </tr>
   `
 }
