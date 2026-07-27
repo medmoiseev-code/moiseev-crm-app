@@ -62,6 +62,7 @@ const SNAPSHOT_KEY = 'moiseev_admin_crm_snapshots_v04'
 const SESSION_KEY = 'moiseev_admin_crm_user'
 const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
 const SIDEBAR_SETTINGS_KEY = 'moiseev_admin_crm_sidebar_v01'
+const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
 const PATIENT_COLUMNS = [
   { key: 'name', width: 220 }, { key: 'addTask', width: 105 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
   { key: 'appointmentDate', width: 130 },
@@ -74,6 +75,9 @@ let state = loadState()
 let currentUser = getCurrentUser()
 let activeTab = 'patients'
 let activeTaskFilter = 'today'
+let taskSearchText = ''
+let taskFilters = loadTaskFilters()
+activeTaskFilter = taskFilters.deadline
 let searchText = ''
 let patientFilters = { name: '', doctor: '', status: '', group: 'all', taskDue: 'all' }
 let sidebarCollapsed = loadSidebarCollapsed()
@@ -92,6 +96,37 @@ function uid() {
 
 function todayISO() {
   return localDatePlus(0)
+}
+
+function loadTaskFilters() {
+  const defaults = { deadline:'today', type:'all', assignee:'all', state:'active' }
+  try {
+    const saved = JSON.parse(localStorage.getItem(TASK_FILTERS_KEY) || '{}')
+    const allowed = {
+      deadline:['today','tomorrow','upcoming','overdue','all'],
+      type:['all','call','reminder','decision','confirmation','message','image','control','checkup','other'],
+      state:['active','completed','all'],
+    }
+    return {
+      deadline:allowed.deadline.includes(saved.deadline) ? saved.deadline : defaults.deadline,
+      type:allowed.type.includes(saved.type) ? saved.type : defaults.type,
+      assignee:saved.assignee === 'all' || saved.assignee === 'unassigned' || USERS.some(user => user.name === saved.assignee) ? saved.assignee : defaults.assignee,
+      state:allowed.state.includes(saved.state) ? saved.state : defaults.state,
+    }
+  } catch { return defaults }
+}
+
+function saveTaskFilters() {
+  taskFilters.deadline = activeTaskFilter
+  localStorage.setItem(TASK_FILTERS_KEY, JSON.stringify(taskFilters))
+}
+
+function resetTaskFilters() {
+  activeTaskFilter = 'today'
+  taskFilters = { deadline:'today', type:'all', assignee:'all', state:'active' }
+  taskSearchText = ''
+  saveTaskFilters()
+  renderTasks()
 }
 
 function datePlus(days) {
@@ -1242,6 +1277,8 @@ function renderPatients() {
   document.querySelectorAll('[data-open-tasks]').forEach(button => {
     button.onclick = () => {
       activeTaskFilter = button.dataset.openTasks
+      taskFilters.deadline = activeTaskFilter
+      saveTaskFilters()
       activeTab = 'tasks'
       try { renderShell() } catch (error) {
         console.error('Не удалось открыть раздел задач', error)
@@ -2002,36 +2039,62 @@ function renderTasks() {
   const content = document.querySelector('#content')
   const today = todayISO()
   const tomorrow = localDatePlus(1)
-  const activeTasks = state.tasks.filter(isTaskActive)
-  const taskCounts = {
-    today:activeTasks.filter(task => task.dueDate === today).length,
-    tomorrow:activeTasks.filter(task => task.dueDate === tomorrow).length,
-    upcoming:activeTasks.filter(task => task.dueDate > tomorrow).length,
-    overdue:activeTasks.filter(isTaskOverdue).length,
+  const matchesAdditionalFilters = task => {
+    const patient = state.patients.find(item => item.id === task.patientId)
+    const query = taskSearchText.trim().toLowerCase()
+    const phoneQuery = normalizePhone(query)
+    const patientValues = [patient?.name, ...(patient?.phones || [])].filter(Boolean).map(value => String(value).toLowerCase())
+    const matchesSearch = !query || patientValues.some(value => value.includes(query) || (phoneQuery && normalizePhone(value).includes(phoneQuery)))
+    const matchesType = taskFilters.type === 'all' || taskTypeGroup(task) === taskFilters.type
+    const matchesAssignee = taskFilters.assignee === 'all' || (taskFilters.assignee === 'unassigned' ? !String(task.assignee || '').trim() : task.assignee === taskFilters.assignee)
+    const matchesState = taskFilters.state === 'all' || (taskFilters.state === 'active' ? isTaskActive(task) : isTaskCompleted(task))
+    return matchesSearch && matchesType && matchesAssignee && matchesState
   }
-  const filtered = state.tasks.filter(task => {
-    const patient = state.patients.find(p => p.id === task.patientId)
-    if (searchText && !patientMatches(patient || {})) return false
-    if (activeTaskFilter === 'today') return isTaskActive(task) && task.dueDate === today
-    if (activeTaskFilter === 'tomorrow') return isTaskActive(task) && task.dueDate === tomorrow
+  const additionalFiltered = state.tasks.filter(matchesAdditionalFilters)
+  const matchesDeadline = task => {
+    if (activeTaskFilter === 'today') return task.dueDate === today
+    if (activeTaskFilter === 'tomorrow') return task.dueDate === tomorrow
     if (activeTaskFilter === 'overdue') return isTaskOverdue(task)
-    if (activeTaskFilter === 'upcoming') return isTaskActive(task) && task.dueDate > tomorrow
-    if (activeTaskFilter === 'recall') return isTaskActive(task) && isCheckupTaskType(task.type)
-    if (activeTaskFilter === 'done') return isTaskCompleted(task)
+    if (activeTaskFilter === 'upcoming') return Boolean(task.dueDate) && task.dueDate > tomorrow
     return true
-  }).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
+  }
+  const filtered = additionalFiltered.filter(matchesDeadline).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
+  const taskCounts = {
+    today:additionalFiltered.filter(task => task.dueDate === today).length,
+    tomorrow:additionalFiltered.filter(task => task.dueDate === tomorrow).length,
+    upcoming:additionalFiltered.filter(task => Boolean(task.dueDate) && task.dueDate > tomorrow).length,
+    overdue:additionalFiltered.filter(isTaskOverdue).length,
+    all:additionalFiltered.length,
+  }
+  const extraFiltersActive = taskFilters.type !== 'all' || taskFilters.assignee !== 'all' || taskFilters.state !== 'active' || Boolean(taskSearchText.trim())
+  const anyFiltersChanged = activeTaskFilter !== 'today' || extraFiltersActive
+  const heading = taskHeading(activeTaskFilter, filtered.length, extraFiltersActive)
+  const emptyMessage = extraFiltersActive ? 'По выбранным фильтрам задачи не найдены' : ({ today:'На сегодня активных задач нет', tomorrow:'На завтра задач нет', upcoming:'Будущих задач нет', overdue:'Просроченных задач нет', all:'Задачи не найдены' })[activeTaskFilter]
 
   content.innerHTML = `
-    <section class="page-head"><div><h1>Задачи</h1><p>У пациента может быть любое количество независимых дат</p></div><button class="btn primary" id="newTask">+ Новая задача</button></section>
-    <div class="filter-tabs">
-      ${taskFilterButton('today', `🟠 Задачи сегодня (${taskCounts.today})`)}${taskFilterButton('tomorrow', `🟡 Задачи завтра (${taskCounts.tomorrow})`)}${taskFilterButton('upcoming', `🟢 Будущие задачи (${taskCounts.upcoming})`)}${taskFilterButton('overdue', `🔴 Просроченные задачи (${taskCounts.overdue})`)}${taskFilterButton('recall', 'Профосмотры')}${taskFilterButton('done', 'Выполненные')}${taskFilterButton('all', 'Все')}
+    <section class="page-head task-page-head"><div><h1>Задачи</h1><p>${heading}</p></div><button class="btn primary" id="newTask">+ Новая задача</button></section>
+    <div class="task-deadline-tabs">
+      ${taskFilterButton('today', '🟠 Задачи сегодня', taskCounts.today)}${taskFilterButton('tomorrow', '🟡 Задачи завтра', taskCounts.tomorrow)}${taskFilterButton('upcoming', '🟢 Будущие задачи', taskCounts.upcoming)}${taskFilterButton('overdue', '🔴 Просроченные задачи', taskCounts.overdue)}${taskFilterButton('all', 'Все задачи', taskCounts.all)}
+    </div>
+    <div class="task-extra-filters">
+      <label class="task-search-control"><span>Поиск пациента</span><div><input id="taskPatientSearch" value="${esc(taskSearchText)}" placeholder="Поиск по пациенту или телефону"><button type="button" id="clearTaskSearch" class="${taskSearchText ? '' : 'hidden'}" aria-label="Очистить поиск">×</button></div></label>
+      <label><span>Тип задачи</span><select id="taskTypeFilter">${taskFilterOptions([['all','Все типы'],['call','Звонок'],['reminder','Напоминание'],['decision','Уточнить решение'],['confirmation','Подтверждение приёма'],['message','Сообщение'],['image','Запрос снимка'],['control','Послеоперационный контроль'],['checkup','Профосмотр'],['other','Другое']], taskFilters.type)}</select></label>
+      <label><span>Ответственный</span><select id="taskAssigneeFilter">${taskFilterOptions([['all','Все ответственные'], ...USERS.map(user => [user.name,user.name]), ['unassigned','Не назначен']], taskFilters.assignee)}</select></label>
+      <label><span>Состояние</span><select id="taskStateFilter">${taskFilterOptions([['active','Активные'],['completed','Выполненные'],['all','Все']], taskFilters.state)}</select></label>
+      ${anyFiltersChanged ? '<button type="button" class="btn reset-task-filters" id="resetTaskFilters">Сбросить фильтры</button>' : ''}
     </div>
     <section class="task-list">
-      ${filtered.length ? filtered.map(taskRow).join('') : '<div class="empty-box large">В этой группе задач нет</div>'}
+      ${filtered.length ? filtered.map(taskRow).join('') : `<div class="empty-box large task-empty-state"><p>${emptyMessage}</p>${anyFiltersChanged ? '<button type="button" class="btn" data-reset-task-filters>Сбросить фильтры</button>' : ''}</div>`}
     </section>
   `
   document.querySelector('#newTask').onclick = () => openTaskModal()
-  document.querySelectorAll('[data-filter]').forEach(button => button.onclick = () => { activeTaskFilter = button.dataset.filter; renderTasks() })
+  document.querySelectorAll('[data-filter]').forEach(button => button.onclick = () => { activeTaskFilter = button.dataset.filter; taskFilters.deadline = activeTaskFilter; saveTaskFilters(); renderTasks() })
+  ;[['#taskTypeFilter','type'],['#taskAssigneeFilter','assignee'],['#taskStateFilter','state']].forEach(([selector,key]) => document.querySelector(selector).onchange = event => { taskFilters[key] = event.target.value; saveTaskFilters(); renderTasks() })
+  const searchInput = document.querySelector('#taskPatientSearch')
+  searchInput.oninput = event => { taskSearchText = event.target.value; renderTasks(); requestAnimationFrame(() => { const input = document.querySelector('#taskPatientSearch'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length) }) }
+  document.querySelector('#clearTaskSearch')?.addEventListener('click', () => { taskSearchText = ''; renderTasks(); requestAnimationFrame(() => document.querySelector('#taskPatientSearch')?.focus()) })
+  document.querySelector('#resetTaskFilters')?.addEventListener('click', resetTaskFilters)
+  document.querySelector('[data-reset-task-filters]')?.addEventListener('click', resetTaskFilters)
   document.querySelectorAll('[data-task]').forEach(row => row.onclick = () => openTaskModal(row.dataset.task))
   document.querySelectorAll('[data-process-task]').forEach(button => {
     button.onclick = event => {
@@ -2041,8 +2104,44 @@ function renderTasks() {
   })
 }
 
-function taskFilterButton(value, label) {
-  return `<button class="filter-btn ${activeTaskFilter === value ? 'active' : ''}" data-filter="${value}">${label}</button>`
+function taskFilterButton(value, label, count) {
+  return `<button class="filter-btn ${activeTaskFilter === value ? 'active' : ''}" data-filter="${value}"><span>${label}</span><b>${count}</b></button>`
+}
+
+function taskFilterOptions(options, selected) {
+  return options.map(([value,label]) => `<option value="${esc(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${esc(label)}</option>`).join('')
+}
+
+function taskTypeGroup(task) {
+  if (isAppointmentConfirmationTask(task) || task?.type === 'appointment') return 'confirmation'
+  if (task?.type === 'call') return 'call'
+  if (task?.type === 'reminder') return 'reminder'
+  if (task?.type === 'decision') return 'decision'
+  if (task?.type === 'write') return 'message'
+  if (task?.type === 'request_image') return 'image'
+  if (['postop_control','implant_check'].includes(task?.type)) return 'control'
+  if (task?.type === 'invite_checkup' || isCheckupTaskType(task?.type)) return 'checkup'
+  return 'other'
+}
+
+function taskWord(count) {
+  const mod100 = Math.abs(count) % 100
+  const mod10 = mod100 % 10
+  if (mod100 >= 11 && mod100 <= 14) return 'задач'
+  if (mod10 === 1) return 'задача'
+  if (mod10 >= 2 && mod10 <= 4) return 'задачи'
+  return 'задач'
+}
+
+function taskHeading(deadline, count, filtered) {
+  if (filtered) return `${({ today:'Сегодня', tomorrow:'На завтра', upcoming:'Среди будущих задач', overdue:'Среди просроченных задач', all:'Всего' })[deadline]} найдено ${count} ${taskWord(count)} по фильтрам`
+  return ({
+    today:`Сегодня необходимо выполнить ${count} ${taskWord(count)}`,
+    tomorrow:`На завтра запланировано ${count} ${taskWord(count)}`,
+    upcoming:Math.abs(count) % 100 !== 11 && Math.abs(count) % 10 === 1 ? `Запланирована ${count} будущая задача` : Math.abs(count) % 100 < 12 || Math.abs(count) % 100 > 14 ? (Math.abs(count) % 10 >= 2 && Math.abs(count) % 10 <= 4 ? `Запланированы ${count} будущие задачи` : `Запланировано ${count} будущих задач`) : `Запланировано ${count} будущих задач`,
+    overdue:`Просрочено ${count} ${taskWord(count)}`,
+    all:`Всего найдено ${count} ${taskWord(count)}`,
+  })[deadline]
 }
 
 function taskRow(task) {
@@ -2896,7 +2995,7 @@ document.addEventListener('keydown', event => {
   if (editing && !(event.ctrlKey && event.key === 'Enter')) return
   if (event.ctrlKey && event.key.toLowerCase() === 'n') { event.preventDefault(); openPatientModal() }
   if (event.ctrlKey && event.key.toLowerCase() === 'f') { event.preventDefault(); activeTab = 'patients'; renderShell(); requestAnimationFrame(() => document.querySelector('[data-patient-filter="name"]')?.focus()) }
-  if (event.altKey && event.key.toLowerCase() === 't') { event.preventDefault(); activeTab = 'tasks'; activeTaskFilter = 'today'; renderShell() }
+  if (event.altKey && event.key.toLowerCase() === 't') { event.preventDefault(); activeTab = 'tasks'; activeTaskFilter = 'today'; taskFilters.deadline = 'today'; saveTaskFilters(); renderShell() }
   if (event.altKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openUpcomingTasksModal() }
   if (event.ctrlKey && event.key === 'Enter') document.querySelector('.modal .btn.primary:not(:disabled)')?.click()
 })
