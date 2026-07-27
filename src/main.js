@@ -37,10 +37,9 @@ const TASK_TYPES = [
 const PATIENT_ACTIONS = [
   { value:'call', label:'📞 Позвонить' }, { value:'reminder', label:'🔔 Напомнить' },
   { value:'thinking', label:'🤔 Пациент думает' }, { value:'appointment', label:'📅 Записать на приём' },
-  { value:'treatment', label:'🦷 Начать лечение' }, { value:'treatment_completed', label:'✅ Завершить лечение' },
+  { value:'treatment_completed', label:'✅ Завершить лечение' },
   { value:'invite_checkup', label:'🔄 Пригласить на профосмотр' },
   { value:'refusal', label:'❌ Отказ' }, { value:'do_not_call', label:'🚫 Не звонить' },
-  { value:'simple_comment', label:'💬 Просто комментарий' },
 ]
 
 const REFUSAL_REASONS = [
