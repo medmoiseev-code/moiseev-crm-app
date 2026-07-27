@@ -311,6 +311,7 @@ function compactTaskDue(task) {
 }
 
 function compactTaskLabel(task) {
+  if (task?.type === 'reminder' && task.reminderMethod === 'write') return `💬 ${cleanTaskLabel(task.title || 'Напоминание пациенту')}`
   const labels = { call:'📞 Позвонить', reminder:'🔔 Напомнить', invite_checkup:'🦷 Профосмотр', appointment:'📅 Записать на приём' }
   const fallback = labels[task?.type] || TASK_TYPES.find(item => item.value === task?.type)?.label || 'Задача'
   const title = String(task?.title || '').trim()
@@ -2361,6 +2362,10 @@ function taskExecutionKind(task) {
 }
 
 function taskExecutionButton(task) {
+  if (task?.type === 'reminder') {
+    if (task.reminderTarget === 'doctor') return '👨‍⚕️ Выполнить'
+    return task.reminderMethod === 'write' ? '💬 Выполнить' : '📞 Выполнить'
+  }
   return ({
     confirmation:'✅ Подтвердить', call:'📞 Указать результат', message:'✉ Выполнить',
     reminder:'🔔 Выполнить', image:'🩻 Получить снимок', control:'🦷 Провести контроль', generic:'✔ Выполнить',
