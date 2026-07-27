@@ -63,6 +63,7 @@ const SESSION_KEY = 'moiseev_admin_crm_user'
 const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
 const SIDEBAR_SETTINGS_KEY = 'moiseev_admin_crm_sidebar_v01'
 const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
+const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
 const PATIENT_COLUMNS = [
   { key: 'name', width: 220 }, { key: 'addTask', width: 105 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
   { key: 'appointmentDate', width: 130 },
@@ -80,6 +81,7 @@ let taskFilters = loadTaskFilters()
 activeTaskFilter = taskFilters.deadline
 let searchText = ''
 let patientFilters = { name: '', doctor: '', status: '', group: 'all', taskDue: 'all' }
+let patientSort = loadPatientSort()
 let sidebarCollapsed = loadSidebarCollapsed()
 let shiftTimer = null
 let worktimeLoaded = false
@@ -1167,12 +1169,40 @@ function initializePatientTableColumns() {
   }
 }
 
+function loadPatientSort() {
+  const allowed = ['updated', 'created', 'appointment', 'nameAsc', 'nameDesc']
+  const saved = localStorage.getItem(PATIENT_SORT_KEY)
+  return allowed.includes(saved) ? saved : 'updated'
+}
+
+function comparePatientNames(a, b) {
+  return String(a.name || '').localeCompare(String(b.name || ''), 'ru', { sensitivity: 'base' })
+}
+
+function sortPatients(patients) {
+  return patients.sort((a, b) => {
+    if (patientSort === 'created') {
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || comparePatientNames(a, b)
+    }
+    if (patientSort === 'appointment') {
+      const aDate = String(a.appointmentDate || '')
+      const bDate = String(b.appointmentDate || '')
+      if (aDate && bDate) return aDate.localeCompare(bDate) || comparePatientNames(a, b)
+      if (aDate) return -1
+      if (bDate) return 1
+      return comparePatientNames(a, b)
+    }
+    if (patientSort === 'nameAsc') return comparePatientNames(a, b)
+    if (patientSort === 'nameDesc') return comparePatientNames(b, a)
+    return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0) || comparePatientNames(a, b)
+  })
+}
+
 function renderPatients() {
   const content = document.querySelector('#content')
-  const patients = [...state.patients]
+  const patients = sortPatients([...state.patients]
     .filter(patientMatches)
-    .filter(patientMatchesFilters)
-    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+    .filter(patientMatchesFilters))
 
   const today = todayISO()
   const tomorrow = localDatePlus(1)
@@ -1299,6 +1329,13 @@ function patientFilterMarkup(found) {
   const doctors = [...new Set(state.patients.flatMap(patient => patient.doctors || []))].sort()
   return `<section class="patient-filters">
     <input data-patient-filter="name" value="${esc(patientFilters.name)}" placeholder="Поиск по ФИО">
+    <label class="patient-sort-field"><span>Сортировка</span><select id="patientSort" aria-label="Сортировка пациентов">
+      <option value="updated" ${patientSort === 'updated' ? 'selected' : ''}>Последние изменения</option>
+      <option value="created" ${patientSort === 'created' ? 'selected' : ''}>Новые пациенты</option>
+      <option value="appointment" ${patientSort === 'appointment' ? 'selected' : ''}>Ближайший приём</option>
+      <option value="nameAsc" ${patientSort === 'nameAsc' ? 'selected' : ''}>По алфавиту (А–Я)</option>
+      <option value="nameDesc" ${patientSort === 'nameDesc' ? 'selected' : ''}>По алфавиту (Я–А)</option>
+    </select></label>
     <select data-patient-filter="doctor"><option value="">Все врачи</option>${doctors.map(value => `<option ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select>
     <select data-patient-filter="status"><option value="">Все статусы</option>${STATUS_OPTIONS.filter(Boolean).map(value => `<option ${patientFilters.status === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select>
     <button class="btn compact" id="resetPatientFilters">Сбросить фильтры</button>
@@ -1307,6 +1344,11 @@ function patientFilterMarkup(found) {
 }
 
 function setupPatientFilters(root) {
+  root.querySelector('#patientSort')?.addEventListener('change', event => {
+    patientSort = event.target.value
+    localStorage.setItem(PATIENT_SORT_KEY, patientSort)
+    renderPatients()
+  })
   root.querySelectorAll('[data-patient-group]').forEach(button => button.addEventListener('click', () => {
     patientFilters.group = button.dataset.patientGroup
     renderPatients()
