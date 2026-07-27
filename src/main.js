@@ -1367,7 +1367,7 @@ function renderPatients() {
 
 function patientGroupFilterMarkup() {
   const statusValue = label => STATUS_OPTIONS.find(value => normalizePatientStatus(value) === label) || ''
-  const groups = [['','Все пациенты'],[statusValue('🆕 Новый'),'Новые'],[statusValue('🤔 Думает'),'Думают'],[statusValue('📅 Записан на приём'),'Записаны'],[statusValue('🔄 Профосмотр'),'Профосмотр'],[statusValue('❌ Отказ'),'Отказы']]
+  const groups = [['','Все пациенты'],[statusValue('🆕 Новый'),'Новые'],[statusValue('📅 Записан на приём'),'Записаны'],[statusValue('🔄 Профосмотр'),'Профосмотр'],[statusValue('❌ Отказ'),'Отказы']]
   return `<nav class="patient-group-filters" aria-label="Быстрый выбор этапа пациента">${groups.map(([value,label]) => `<button class="filter-btn ${patientFilters.status === value ? 'active' : ''}" data-patient-status="${esc(value)}">${label}</button>`).join('')}</nav>`
 }
 
