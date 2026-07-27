@@ -1766,7 +1766,7 @@ function compactPatientTaskMarkup(task) {
 function openPatientModal(patientId = null) {
   const original = state.patients.find(p => p.id === patientId)
   const patient = original ? cloneData(original) : {
-    id: uid(), name: '', phones: [''], doctors: ['Моисеев Г.А.'], appointmentDate: '',
+    id: uid(), name: '', phones: [''], doctors: ['Моисеев Г.А.'], birthDate: '', appointmentDate: '',
     doctorComment: '', specialNote: '', status: '🆕 Новый', adminNote: '', urgent: false,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), updatedBy: currentUser.name,
     history: [], externalId: null,
@@ -1787,7 +1787,7 @@ function openPatientModal(patientId = null) {
           <button class="icon-btn" data-close>×</button>
         </div>
         <div class="patient-summary-grid">
-          <section><label class="field"><span>ФИО</span><input id="pName" value="${esc(patient.name)}" placeholder="Фамилия Имя Отчество"></label><label class="field"><span>Телефон</span><input id="pPhone1" value="${esc(patient.phones?.[0] || '')}"></label><label class="field"><span>Дополнительный телефон</span><input id="pPhone2" value="${esc(patient.phones?.[1] || '')}"></label><label class="field"><span>Врач</span><select id="pDoctors"><option value="">Не выбран</option>${[...new Set([...DOCTORS, ...(patient.doctors || [])])].filter(Boolean).map(doctor => `<option value="${esc(doctor)}" ${(patient.doctors || [])[0] === doctor ? 'selected' : ''}>${esc(doctor)}</option>`).join('')}</select></label></section>
+          <section><label class="field"><span>ФИО</span><input id="pName" value="${esc(patient.name)}" placeholder="Фамилия Имя Отчество"></label><label class="field"><span>Телефон</span><input id="pPhone1" value="${esc(patient.phones?.[0] || '')}"></label><label class="field"><span>Дополнительный телефон</span><input id="pPhone2" value="${esc(patient.phones?.[1] || '')}"></label><div class="patient-birth-field">${manualDateMarkup('pBirth', 'Дата рождения', patient.birthDate || '')}</div><label class="field"><span>Врач</span><select id="pDoctors"><option value="">Не выбран</option>${[...new Set([...DOCTORS, ...(patient.doctors || [])])].filter(Boolean).map(doctor => `<option value="${esc(doctor)}" ${(patient.doctors || [])[0] === doctor ? 'selected' : ''}>${esc(doctor)}</option>`).join('')}</select></label></section>
           <section><label class="field"><span>Этап пациента</span><input id="pStatus" value="${esc(normalizePatientStatus(patient.status))}" readonly title="Статус изменяется через мастер действий в таблице"></label>${original ? `<div class="patient-summary-item"><span>Ближайшая активная задача</span><b>${nearestTask ? esc(compactTaskLabel(nearestTask)) : '—'}</b><small>${nearestTask ? esc(formatTaskDue(nearestTask)) : 'Нет активных задач'}</small></div>` : ''}<div class="patient-appointment-fields">${manualDateMarkup('pAppointment', 'Дата приёма', patient.appointmentDate || '')}${manualTimeMarkup('pAppointment', 'Время приёма', patient.appointmentAt?.slice(11, 16) || (patient.appointmentDate ? '10:00' : ''))}</div><div class="patient-summary-item"><span>Дата создания пациента</span><b>${formatDate(patient.createdAt)}</b></div></section>
         </div>
         <section class="patient-card-section compact-comment-section"><div class="compact-section-head"><h3>Примечание</h3></div><label class="field" data-admin-editor><textarea id="pNewNote" placeholder="Введите примечание">${esc(patient.adminNote || '')}</textarea></label>${original ? '<button type="button" class="text-action all-comments-link" data-open-comments-history>История примечаний</button>' : ''}</section>
@@ -1803,6 +1803,7 @@ function openPatientModal(patientId = null) {
   const modal = document.querySelector('#patientModal')
   setupManualDate(modal, 'pAppointment')
   setupManualTime(modal, 'pAppointment')
+  setupManualDate(modal, 'pBirth')
   setupHistoryExpansion(modal)
   modal.querySelectorAll('select, input, textarea, button').forEach(control => {
     ;['pointerdown','mousedown','click'].forEach(type => control.addEventListener(type, event => event.stopPropagation()))
@@ -1840,13 +1841,16 @@ function openPatientModal(patientId = null) {
     const specialNote = modal.querySelector('#pSpecialNote')?.value.trim() || ''
     const appointmentDate = readManualDate(modal, 'pAppointment', false)
     if (appointmentDate === null) return
+    const birthDate = readManualDate(modal, 'pBirth', false)
+    if (birthDate === null) return
     const appointmentTime = appointmentDate ? readManualTime(modal, 'pAppointment') : readManualTime(modal, 'pAppointment', false)
     if (appointmentTime === null) return
     const appointmentChanged = Boolean(appointmentDate) && (!original || original.appointmentDate !== appointmentDate || (original.appointmentAt?.slice(11, 16) || '') !== appointmentTime)
-    const previousData = original ? JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, appointmentDate: patient.appointmentDate, status: patient.status }) : null
+    const previousData = original ? JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, birthDate:patient.birthDate, appointmentDate: patient.appointmentDate, status: patient.status }) : null
     patient.name = name
     patient.phones = [phone1, modal.querySelector('#pPhone2').value.trim()].filter(Boolean)
     patient.doctors = modal.querySelector('#pDoctors').value.split(',').map(v => v.trim()).filter(Boolean)
+    patient.birthDate = birthDate
     patient.appointmentDate = appointmentDate
     patient.appointmentAt = appointmentDate ? `${appointmentDate}T${appointmentTime}:00` : null
     patient.status = modal.querySelector('#pStatus').value
@@ -1866,7 +1870,7 @@ function openPatientModal(patientId = null) {
       patient.adminNote = note
       patient.history.unshift(createHistoryEntry('admin_comment', note || 'Примечание удалено.'))
     }
-    const currentData = JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, appointmentDate: patient.appointmentDate, status: patient.status })
+    const currentData = JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, birthDate:patient.birthDate, appointmentDate: patient.appointmentDate, status: patient.status })
     if (!original) patient.history.unshift(createHistoryEntry('system', 'Создана карточка пациента'))
     else if (previousData !== currentData) patient.history.unshift(createHistoryEntry('system', 'Изменены данные пациента'))
     if (original) Object.assign(original, patient)
