@@ -1198,30 +1198,45 @@ function sortPatients(patients) {
   })
 }
 
+function taskNavigationMarkup(activeFilter = '') {
+  const today = todayISO()
+  const tomorrow = localDatePlus(1)
+  const activeTasks = state.tasks.filter(isTaskActive)
+  const items = [
+    ['today', '🟠 Задачи сегодня', activeTasks.filter(task => task.dueDate === today).length],
+    ['tomorrow', '🟡 Задачи завтра', activeTasks.filter(task => task.dueDate === tomorrow).length],
+    ['upcoming', '🟢 Будущие задачи', activeTasks.filter(task => Boolean(task.dueDate) && task.dueDate > tomorrow).length],
+    ['overdue', '🔴 Просроченные задачи', activeTasks.filter(isTaskOverdue).length],
+  ]
+  return `<section class="summary-strip task-navigation" aria-label="Навигация по срокам задач">${items.map(([value, label, count]) => `<button class="summary-item task-summary-tab task-tab-${value} ${activeFilter === value ? 'active' : ''}" data-open-tasks="${value}"><span>${label} <b>(${count})</b></span></button>`).join('')}</section>`
+}
+
+function setupTaskNavigation(root) {
+  root.querySelectorAll('[data-open-tasks]').forEach(button => {
+    button.onclick = () => {
+      activeTaskFilter = button.dataset.openTasks
+      taskFilters.deadline = activeTaskFilter
+      saveTaskFilters()
+      if (activeTab === 'tasks') renderTasks()
+      else {
+        activeTab = 'tasks'
+        renderShell()
+      }
+    }
+  })
+}
+
 function renderPatients() {
   const content = document.querySelector('#content')
   const patients = sortPatients([...state.patients]
     .filter(patientMatches)
     .filter(patientMatchesFilters))
 
-  const today = todayISO()
-  const tomorrow = localDatePlus(1)
-  const openTasks = state.tasks.filter(isTaskActive)
-  const todayCount = openTasks.filter(task => task.dueDate === today).length
-  const tomorrowCount = openTasks.filter(task => task.dueDate === tomorrow).length
-  const upcomingCount = getUpcomingActiveTasks().length
-  const overdueCount = openTasks.filter(isTaskOverdue).length
-
   content.innerHTML = `
     <section class="patients-toolbar">
       <button class="btn primary" id="newPatient">+ Новый пациент</button>
     </section>
-    <section class="summary-strip">
-      <button class="summary-item task-summary-tab task-tab-today" data-open-tasks="today"><span>🟠 Задачи сегодня <b>(${todayCount})</b></span></button>
-      <button class="summary-item task-summary-tab task-tab-tomorrow" data-open-tasks="tomorrow"><span>🟡 Задачи завтра <b>(${tomorrowCount})</b></span></button>
-      <button class="summary-item task-summary-tab task-tab-upcoming" data-open-tasks="upcoming"><span>🟢 Будущие задачи <b>(${upcomingCount})</b></span></button>
-      <button class="summary-item task-summary-tab task-tab-overdue" data-open-tasks="overdue"><span>🔴 Просроченные задачи <b>(${overdueCount})</b></span></button>
-    </section>
+    ${taskNavigationMarkup()}
     ${patientGroupFilterMarkup()}
     ${patientFilterMarkup(patients.length)}
     <section class="table-card">
@@ -1304,20 +1319,7 @@ function renderPatients() {
       openPatientActionModal(button.dataset.patientId, button.dataset.patientAction)
     })
   })
-  document.querySelectorAll('[data-open-tasks]').forEach(button => {
-    button.onclick = () => {
-      activeTaskFilter = button.dataset.openTasks
-      taskFilters.deadline = activeTaskFilter
-      saveTaskFilters()
-      activeTab = 'tasks'
-      try { renderShell() } catch (error) {
-        console.error('Не удалось открыть раздел задач', error)
-        activeTab = 'patients'
-        renderShell()
-        showToast('Не удалось открыть список задач. Проверьте повреждённые записи в бэкапе.')
-      }
-    }
-  })
+  setupTaskNavigation(content)
 }
 
 function patientGroupFilterMarkup() {
@@ -2101,36 +2103,30 @@ function renderTasks() {
     return true
   }
   const filtered = additionalFiltered.filter(matchesDeadline).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
-  const taskCounts = {
-    today:additionalFiltered.filter(task => task.dueDate === today).length,
-    tomorrow:additionalFiltered.filter(task => task.dueDate === tomorrow).length,
-    upcoming:additionalFiltered.filter(task => Boolean(task.dueDate) && task.dueDate > tomorrow).length,
-    overdue:additionalFiltered.filter(isTaskOverdue).length,
-    all:additionalFiltered.length,
-  }
   const extraFiltersActive = taskFilters.type !== 'all' || taskFilters.assignee !== 'all' || taskFilters.state !== 'active' || Boolean(taskSearchText.trim())
   const anyFiltersChanged = activeTaskFilter !== 'today' || extraFiltersActive
   const heading = taskHeading(activeTaskFilter, filtered.length, extraFiltersActive)
   const emptyMessage = extraFiltersActive ? 'По выбранным фильтрам задачи не найдены' : ({ today:'На сегодня активных задач нет', tomorrow:'На завтра задач нет', upcoming:'Будущих задач нет', overdue:'Просроченных задач нет', all:'Задачи не найдены' })[activeTaskFilter]
 
   content.innerHTML = `
-    <section class="page-head task-page-head"><div><h1>Задачи</h1><p>${heading}</p></div><button class="btn primary" id="newTask">+ Новая задача</button></section>
-    <div class="task-deadline-tabs">
-      ${taskFilterButton('today', '🟠 Задачи сегодня', taskCounts.today)}${taskFilterButton('tomorrow', '🟡 Задачи завтра', taskCounts.tomorrow)}${taskFilterButton('upcoming', '🟢 Будущие задачи', taskCounts.upcoming)}${taskFilterButton('overdue', '🔴 Просроченные задачи', taskCounts.overdue)}${taskFilterButton('all', 'Все задачи', taskCounts.all)}
-    </div>
+    <section class="page-head task-page-head"><div><h1>Задачи</h1></div><button class="btn primary" id="newTask">+ Новая задача</button></section>
+    ${taskNavigationMarkup(activeTaskFilter)}
     <div class="task-extra-filters">
       <label class="task-search-control"><span>Поиск пациента</span><div><input id="taskPatientSearch" value="${esc(taskSearchText)}" placeholder="Поиск по пациенту или телефону"><button type="button" id="clearTaskSearch" class="${taskSearchText ? '' : 'hidden'}" aria-label="Очистить поиск">×</button></div></label>
       <label><span>Тип задачи</span><select id="taskTypeFilter">${taskFilterOptions([['all','Все типы'],['call','Звонок'],['reminder','Напоминание'],['decision','Уточнить решение'],['confirmation','Подтверждение приёма'],['message','Сообщение'],['image','Запрос снимка'],['control','Послеоперационный контроль'],['checkup','Профосмотр'],['other','Другое']], taskFilters.type)}</select></label>
       <label><span>Ответственный</span><select id="taskAssigneeFilter">${taskFilterOptions([['all','Все ответственные'], ...USERS.map(user => [user.name,user.name]), ['unassigned','Не назначен']], taskFilters.assignee)}</select></label>
       <label><span>Состояние</span><select id="taskStateFilter">${taskFilterOptions([['active','Активные'],['completed','Выполненные'],['all','Все']], taskFilters.state)}</select></label>
+      <button type="button" class="btn all-tasks-filter ${activeTaskFilter === 'all' ? 'active' : ''}" id="showAllTasks">Все задачи</button>
       ${anyFiltersChanged ? '<button type="button" class="btn reset-task-filters" id="resetTaskFilters">Сбросить фильтры</button>' : ''}
     </div>
+    <p class="task-category-description">${heading}</p>
     <section class="task-list">
       ${filtered.length ? filtered.map(taskRow).join('') : `<div class="empty-box large task-empty-state"><p>${emptyMessage}</p>${anyFiltersChanged ? '<button type="button" class="btn" data-reset-task-filters>Сбросить фильтры</button>' : ''}</div>`}
     </section>
   `
   document.querySelector('#newTask').onclick = () => openTaskModal()
-  document.querySelectorAll('[data-filter]').forEach(button => button.onclick = () => { activeTaskFilter = button.dataset.filter; taskFilters.deadline = activeTaskFilter; saveTaskFilters(); renderTasks() })
+  setupTaskNavigation(content)
+  document.querySelector('#showAllTasks').onclick = () => { activeTaskFilter = 'all'; taskFilters.deadline = 'all'; saveTaskFilters(); renderTasks() }
   ;[['#taskTypeFilter','type'],['#taskAssigneeFilter','assignee'],['#taskStateFilter','state']].forEach(([selector,key]) => document.querySelector(selector).onchange = event => { taskFilters[key] = event.target.value; saveTaskFilters(); renderTasks() })
   const searchInput = document.querySelector('#taskPatientSearch')
   searchInput.oninput = event => { taskSearchText = event.target.value; renderTasks(); requestAnimationFrame(() => { const input = document.querySelector('#taskPatientSearch'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length) }) }
@@ -2144,10 +2140,6 @@ function renderTasks() {
       openTaskExecution(button.dataset.processTask)
     }
   })
-}
-
-function taskFilterButton(value, label, count) {
-  return `<button class="filter-btn ${activeTaskFilter === value ? 'active' : ''}" data-filter="${value}"><span>${label}</span><b>${count}</b></button>`
 }
 
 function taskFilterOptions(options, selected) {
