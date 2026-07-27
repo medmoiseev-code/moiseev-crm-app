@@ -1750,7 +1750,7 @@ function openPatientModal(patientId = null) {
   const patient = original ? cloneData(original) : {
     id: uid(), name: '', phones: [''], doctors: ['Моисеев Г.А.'], appointmentDate: '',
     doctorComment: '', specialNote: '', status: '🆕 Новый', adminNote: '', urgent: false,
-    createdAt: todayISO(), updatedAt: new Date().toISOString(), updatedBy: currentUser.name,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), updatedBy: currentUser.name,
     history: [], externalId: null,
   }
   const patientTasks = state.tasks
