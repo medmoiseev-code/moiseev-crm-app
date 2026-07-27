@@ -64,6 +64,7 @@ const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
 const SIDEBAR_SETTINGS_KEY = 'moiseev_admin_crm_sidebar_v01'
 const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
 const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
+const PATIENT_FILTERS_KEY = 'moiseev_admin_crm_patient_filters_v01'
 const PATIENT_COLUMNS = [
   { key: 'name', width: 220 }, { key: 'addTask', width: 105 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 },
   { key: 'appointmentDate', width: 130 },
@@ -80,7 +81,7 @@ let taskSearchText = ''
 let taskFilters = loadTaskFilters()
 activeTaskFilter = taskFilters.deadline
 let searchText = ''
-let patientFilters = { name: '', doctor: '', status: '', group: 'all', taskDue: 'all' }
+let patientFilters = loadPatientFilters()
 let patientSort = loadPatientSort()
 let sidebarCollapsed = loadSidebarCollapsed()
 let shiftTimer = null
@@ -754,14 +755,16 @@ function specialNoteBadge(patient, className = '') {
 }
 
 function patientMatchesFilters(patient) {
-  const name = patientFilters.name.trim().toLowerCase()
+  const query = patientFilters.name.trim().toLowerCase()
+  const phoneQuery = normalizePhone(query)
+  const identityValues = [patient.name, ...(patient.phones || [])].filter(Boolean).map(value => String(value).toLowerCase())
   const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
   const matchesTaskDue = patientFilters.taskDue === 'all'
     || (patientFilters.taskDue === 'today' && activeTasks.some(task => task.dueDate === localDatePlus(0)))
     || (patientFilters.taskDue === 'upcoming' && getUpcomingActiveTasks(activeTasks).length > 0)
-  return (!name || String(patient.name || '').toLowerCase().includes(name))
+  return (!query || identityValues.some(value => value.includes(query) || (phoneQuery && normalizePhone(value).includes(phoneQuery))))
     && (!patientFilters.doctor || (patient.doctors || []).includes(patientFilters.doctor))
-    && (!patientFilters.status || patient.status === patientFilters.status)
+    && (!patientFilters.status || normalizePatientStatus(patient.status) === normalizePatientStatus(patientFilters.status))
     && patientMatchesGroup(patient, patientFilters.group)
     && matchesTaskDue
 }
@@ -1170,9 +1173,21 @@ function initializePatientTableColumns() {
 }
 
 function loadPatientSort() {
-  const allowed = ['updated', 'created', 'appointment', 'nameAsc', 'nameDesc']
+  const allowed = ['updated', 'created', 'createdAsc', 'createdDesc', 'appointment', 'appointmentAsc', 'appointmentDesc', 'nameAsc', 'nameDesc', 'historyAsc', 'historyDesc', 'taskAsc', 'taskDesc']
   const saved = localStorage.getItem(PATIENT_SORT_KEY)
   return allowed.includes(saved) ? saved : 'updated'
+}
+
+function loadPatientFilters() {
+  const defaults = { name: '', doctor: '', status: '', group: 'all', taskDue: 'all' }
+  try {
+    const saved = JSON.parse(localStorage.getItem(PATIENT_FILTERS_KEY) || '{}')
+    return { ...defaults, doctor: String(saved.doctor || ''), status: String(saved.status || '') }
+  } catch { return defaults }
+}
+
+function savePatientFilters() {
+  localStorage.setItem(PATIENT_FILTERS_KEY, JSON.stringify({ doctor:patientFilters.doctor, status:patientFilters.status }))
 }
 
 function comparePatientNames(a, b) {
@@ -1181,21 +1196,47 @@ function comparePatientNames(a, b) {
 
 function sortPatients(patients) {
   return patients.sort((a, b) => {
-    if (patientSort === 'created') {
-      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0) || comparePatientNames(a, b)
+    if (['created', 'createdDesc', 'createdAsc'].includes(patientSort)) {
+      const direction = patientSort === 'createdAsc' ? 1 : -1
+      return direction * (new Date(a.createdAt || 0) - new Date(b.createdAt || 0)) || comparePatientNames(a, b)
     }
-    if (patientSort === 'appointment') {
+    if (['appointment', 'appointmentAsc', 'appointmentDesc'].includes(patientSort)) {
       const aDate = String(a.appointmentDate || '')
       const bDate = String(b.appointmentDate || '')
-      if (aDate && bDate) return aDate.localeCompare(bDate) || comparePatientNames(a, b)
+      const direction = patientSort === 'appointmentDesc' ? -1 : 1
+      if (aDate && bDate) return direction * aDate.localeCompare(bDate) || comparePatientNames(a, b)
       if (aDate) return -1
       if (bDate) return 1
       return comparePatientNames(a, b)
     }
     if (patientSort === 'nameAsc') return comparePatientNames(a, b)
     if (patientSort === 'nameDesc') return comparePatientNames(b, a)
+    if (patientSort === 'historyAsc') return new Date(a.updatedAt || a.createdAt || 0) - new Date(b.updatedAt || b.createdAt || 0) || comparePatientNames(a, b)
+    if (patientSort === 'historyDesc') return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0) || comparePatientNames(a, b)
+    if (patientSort === 'taskAsc' || patientSort === 'taskDesc') {
+      const nearestDate = patient => state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task) && task.dueDate).map(task => task.dueDate).sort()[0] || ''
+      const aDate = nearestDate(a)
+      const bDate = nearestDate(b)
+      if (aDate && bDate) return (patientSort === 'taskDesc' ? -1 : 1) * aDate.localeCompare(bDate) || comparePatientNames(a, b)
+      if (aDate) return -1
+      if (bDate) return 1
+      return comparePatientNames(a, b)
+    }
     return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0) || comparePatientNames(a, b)
   })
+}
+
+function patientSortIndicator(column) {
+  const indicators = {
+    name:{ nameAsc:'↑', nameDesc:'↓' }, addTask:{ taskAsc:'↑', taskDesc:'↓' }, createdAt:{ createdDesc:'↓', created:'↓', createdAsc:'↑' },
+    appointmentDate:{ appointmentAsc:'↑', appointment:'↑', appointmentDesc:'↓' }, history:{ historyDesc:'↓', historyAsc:'↑' },
+  }
+  return indicators[column]?.[patientSort] || '↕'
+}
+
+function patientHeaderSortButton(column, label, title = '') {
+  const active = patientSortIndicator(column) !== '↕'
+  return `<button type="button" class="table-header-control ${active ? 'active' : ''}" data-patient-sort-header="${column}" title="${esc(title || `Сортировать: ${label}`)}"><span>${label}</span><i>${patientSortIndicator(column)}</i></button>`
 }
 
 function taskNavigationMarkup(activeFilter = '') {
@@ -1231,6 +1272,7 @@ function renderPatients() {
   const patients = sortPatients([...state.patients]
     .filter(patientMatches)
     .filter(patientMatchesFilters))
+  const doctors = [...new Set(state.patients.flatMap(patient => patient.doctors || []))].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru'))
 
   content.innerHTML = `
     <section class="patients-toolbar">
@@ -1238,19 +1280,19 @@ function renderPatients() {
     </section>
     ${taskNavigationMarkup()}
     ${patientGroupFilterMarkup()}
-    ${patientFilterMarkup(patients.length)}
+    ${patientFilterMarkup()}
     <section class="table-card">
       <div class="table-scroll">
         <table class="patient-table">
           <thead><tr>
-            <th>ФИО</th>
-            <th>+ Задача</th>
-            <th>Дата создания</th>
-            <th>Врач</th>
-            <th>Дата приёма</th>
-            <th>Статус</th>
+            <th>${patientHeaderSortButton('name', 'ФИО')}</th>
+            <th>${patientHeaderSortButton('addTask', '+ Задача', 'Сортировать по ближайшей задаче')}</th>
+            <th>${patientHeaderSortButton('createdAt', 'Дата создания')}</th>
+            <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
+            <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
+            <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
             <th>Примечание</th>
-            <th>История</th>
+            <th>${patientHeaderSortButton('history', 'История')}</th>
           </tr></thead>
           <tbody>
             ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="8">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
@@ -1261,6 +1303,7 @@ function renderPatients() {
   `
 
   initializePatientTableColumns()
+  setupPatientHeaderControls(content)
   setupHistoryExpansion(content)
   document.querySelector('#newPatient').onclick = () => openPatientModal()
   setupPatientFilters(content)
@@ -1323,36 +1366,20 @@ function renderPatients() {
 }
 
 function patientGroupFilterMarkup() {
-  const groups = [['all','Все пациенты'],['active','Активные'],['booked','Записаны'],['treatment','Лечатся'],['checkup','Профосмотр'],['refusal','Отказы'],['do_not_call','Не звонить'],['completed','Завершённые']]
-  return `<nav class="patient-group-filters" aria-label="Группы пациентов">${groups.map(([value,label]) => `<button class="filter-btn ${patientFilters.group === value ? 'active' : ''}" data-patient-group="${value}">${label}</button>`).join('')}</nav>`
+  const statusValue = label => STATUS_OPTIONS.find(value => normalizePatientStatus(value) === label) || ''
+  const groups = [['','Все пациенты'],[statusValue('🆕 Новый'),'Новые'],[statusValue('🤔 Думает'),'Думают'],[statusValue('📅 Записан на приём'),'Записаны'],[statusValue('🔄 Профосмотр'),'Профосмотр'],[statusValue('❌ Отказ'),'Отказы']]
+  return `<nav class="patient-group-filters" aria-label="Быстрый выбор этапа пациента">${groups.map(([value,label]) => `<button class="filter-btn ${patientFilters.status === value ? 'active' : ''}" data-patient-status="${esc(value)}">${label}</button>`).join('')}</nav>`
 }
 
-function patientFilterMarkup(found) {
-  const doctors = [...new Set(state.patients.flatMap(patient => patient.doctors || []))].sort()
-  return `<section class="patient-filters">
-    <input data-patient-filter="name" value="${esc(patientFilters.name)}" placeholder="Поиск по ФИО">
-    <label class="patient-sort-field"><span>Сортировка</span><select id="patientSort" aria-label="Сортировка пациентов">
-      <option value="updated" ${patientSort === 'updated' ? 'selected' : ''}>Последние изменения</option>
-      <option value="created" ${patientSort === 'created' ? 'selected' : ''}>Новые пациенты</option>
-      <option value="appointment" ${patientSort === 'appointment' ? 'selected' : ''}>Ближайший приём</option>
-      <option value="nameAsc" ${patientSort === 'nameAsc' ? 'selected' : ''}>По алфавиту (А–Я)</option>
-      <option value="nameDesc" ${patientSort === 'nameDesc' ? 'selected' : ''}>По алфавиту (Я–А)</option>
-    </select></label>
-    <select data-patient-filter="doctor"><option value="">Все врачи</option>${doctors.map(value => `<option ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select>
-    <select data-patient-filter="status"><option value="">Все статусы</option>${STATUS_OPTIONS.filter(Boolean).map(value => `<option ${patientFilters.status === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select>
-    <button class="btn compact" id="resetPatientFilters">Сбросить фильтры</button>
-    <strong class="filter-count">Найдено: ${found}${patientFilters.taskDue === 'upcoming' ? ' · будущие задачи' : ''}</strong>
-  </section>`
+function patientFilterMarkup() {
+  return `<section class="patient-search-bar"><div><input data-patient-filter="name" value="${esc(patientFilters.name)}" placeholder="Поиск пациента или телефона" aria-label="Поиск пациента или телефона"><button type="button" id="clearPatientSearch" class="${patientFilters.name ? '' : 'hidden'}" aria-label="Очистить поиск">×</button></div></section>`
 }
 
 function setupPatientFilters(root) {
-  root.querySelector('#patientSort')?.addEventListener('change', event => {
-    patientSort = event.target.value
-    localStorage.setItem(PATIENT_SORT_KEY, patientSort)
-    renderPatients()
-  })
-  root.querySelectorAll('[data-patient-group]').forEach(button => button.addEventListener('click', () => {
-    patientFilters.group = button.dataset.patientGroup
+  root.querySelectorAll('[data-patient-status]').forEach(button => button.addEventListener('click', () => {
+    patientFilters.status = button.dataset.patientStatus
+    patientFilters.group = 'all'
+    savePatientFilters()
     renderPatients()
   }))
   root.querySelectorAll('[data-patient-filter]').forEach(control => {
@@ -1370,10 +1397,38 @@ function setupPatientFilters(root) {
     })
   })
   document.querySelector('[data-open-checkups]')?.addEventListener('click', () => { patientFilters.group = 'checkup'; patientFilters.taskDue = 'all'; renderPatients() })
-  root.querySelector('#resetPatientFilters').onclick = () => {
-    patientFilters = { name: '', doctor: '', status: '', group: 'all', taskDue: 'all' }
-    renderPatients()
+  root.querySelector('#clearPatientSearch')?.addEventListener('click', () => { patientFilters.name = ''; renderPatients(); requestAnimationFrame(() => document.querySelector('[data-patient-filter="name"]')?.focus()) })
+}
+
+function setupPatientHeaderControls(root) {
+  const cycles = {
+    name:['nameAsc', 'nameDesc', 'updated'],
+    addTask:['taskAsc', 'taskDesc', 'updated'],
+    createdAt:['createdDesc', 'createdAsc', 'updated'],
+    appointmentDate:['appointmentAsc', 'appointmentDesc', 'updated'],
+    history:['historyDesc', 'historyAsc', 'updated'],
   }
+  root.querySelectorAll('[data-patient-sort-header]').forEach(button => {
+    button.draggable = false
+    ;['pointerdown', 'mousedown', 'click'].forEach(type => button.addEventListener(type, event => event.stopPropagation()))
+    button.addEventListener('click', () => {
+      const cycle = cycles[button.dataset.patientSortHeader]
+      const currentIndex = cycle.indexOf(patientSort)
+      patientSort = cycle[(currentIndex + 1) % cycle.length]
+      localStorage.setItem(PATIENT_SORT_KEY, patientSort)
+      renderPatients()
+    })
+  })
+  root.querySelectorAll('[data-header-patient-filter]').forEach(select => {
+    select.draggable = false
+    ;['pointerdown', 'mousedown', 'click'].forEach(type => select.addEventListener(type, event => event.stopPropagation()))
+    select.addEventListener('change', () => {
+      patientFilters[select.dataset.headerPatientFilter] = select.value
+      if (select.dataset.headerPatientFilter === 'status') patientFilters.group = 'all'
+      savePatientFilters()
+      renderPatients()
+    })
+  })
 }
 
 function dateInputMarkup(patient, field) {
