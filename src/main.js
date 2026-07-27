@@ -1230,7 +1230,7 @@ function renderPatients() {
   document.querySelectorAll('[data-next-patient-task]').forEach(button => button.addEventListener('click', event => {
     event.preventDefault()
     event.stopPropagation()
-    openCallResultModal(button.dataset.nextPatientTask)
+    openTaskExecution(button.dataset.nextPatientTask)
   }))
   document.querySelectorAll('[data-patient-action]').forEach(button => {
     button.addEventListener('click', event => {
@@ -1597,7 +1597,7 @@ function updateSpecialNote(patient, nextValue) {
 function compactPatientTaskMarkup(task) {
   const overdue = isTaskOverdue(task)
   const comment = String(task.comment || task.note || '').trim()
-  return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time>${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">Выполнить</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
+  return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time>${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">${taskExecutionButton(task)}</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
 }
 
 function openPatientModal(patientId = null) {
@@ -1647,7 +1647,7 @@ function openPatientModal(patientId = null) {
   modal.querySelectorAll('[data-close]').forEach(button => button.onclick = () => modal.remove())
   modal.querySelector('#addTaskBtn').onclick = () => openTaskModal(null, patient.id)
   modal.querySelectorAll('[data-edit-task]').forEach(button => button.onclick = () => openTaskModal(button.dataset.editTask, patient.id))
-  modal.querySelectorAll('[data-card-process-task]').forEach(button => button.onclick = () => openCallResultModal(button.dataset.cardProcessTask, { drawerPatientId:patient.id }))
+  modal.querySelectorAll('[data-card-process-task]').forEach(button => button.onclick = () => openTaskExecution(button.dataset.cardProcessTask, { drawerPatientId:patient.id }))
   modal.querySelector('[data-toggle-admin-comment]')?.addEventListener('click', event => {
     const editor = modal.querySelector('[data-admin-editor]')
     editor.classList.toggle('hidden')
@@ -1926,7 +1926,7 @@ function openTaskDrawer(patientId, showForm = false) {
   if (overlay.querySelector('#drawerTaskTime')) setupManualTime(overlay, 'drawerTask')
   overlay.querySelectorAll('[data-process-task]').forEach(button => button.onclick = event => {
     event.stopPropagation()
-    openCallResultModal(button.dataset.processTask, { drawerPatientId: patientId })
+    openTaskExecution(button.dataset.processTask, { drawerPatientId: patientId })
   })
   overlay.querySelector('#saveDrawerTask')?.addEventListener('click', () => {
     const type = overlay.querySelector('#drawerTaskType').value
@@ -1970,7 +1970,7 @@ function taskDrawerList(tasks) {
     <div><strong>${esc(taskTypeDisplay(task))}</strong><time class="${task.dueDate < localDatePlus(0) ? 'late' : ''}">${formatTaskDue(task)}</time></div>
     <small>${esc(task.assignee || 'Без ответственного')}</small>
     ${(task.comment || task.note) ? `<p>${esc(task.comment || task.note)}</p>` : ''}
-    <button class="process-task-btn" type="button" data-process-task="${task.id}" title="Указать результат звонка">☎ Обработать</button>
+    <button class="process-task-btn" type="button" data-process-task="${task.id}">${taskExecutionButton(task)}</button>
   </article>`).join('')}</div>`
 }
 
@@ -1987,14 +1987,14 @@ function openUpcomingTasksModal() {
     <div class="modal-task-list">${tasks.length ? tasks.map(task => {
       const patient = state.patients.find(item => item.id === task.patientId)
       const type = taskTypeDisplay(task)
-      return `<article class="modal-task-row"><button class="modal-task-patient" data-upcoming-patient="${task.patientId}"><b>${esc(patient?.name || 'Пациент удалён')} ${specialNoteBadge(patient)}</b><span>${esc(patient?.phones?.[0] || '')}</span></button><div><b>${esc(type)}</b><span>${formatTaskDue(task)}</span>${(task.comment || task.note) ? `<p>${esc(task.comment || task.note)}</p>` : ''}</div><button class="process-task-btn" data-process-task="${task.id}" title="Указать результат звонка">☎ Обработать</button></article>`
+      return `<article class="modal-task-row"><button class="modal-task-patient" data-upcoming-patient="${task.patientId}"><b>${esc(patient?.name || 'Пациент удалён')} ${specialNoteBadge(patient)}</b><span>${esc(patient?.phones?.[0] || '')}</span></button><div><b>${esc(type)}</b><span>${formatTaskDue(task)}</span>${(task.comment || task.note) ? `<p>${esc(task.comment || task.note)}</p>` : ''}</div><button class="process-task-btn" data-process-task="${task.id}">${taskExecutionButton(task)}</button></article>`
     }).join('') : '<div class="empty-box large">Будущих задач нет</div>'}</div>
   </div></div>`)
   const modal = document.querySelector('#upcomingTasksModal')
   const close = () => modal.remove()
   modal.querySelector('[data-close-upcoming]').onclick = close
   modal.addEventListener('click', event => { if (event.target === modal) close() })
-  modal.querySelectorAll('[data-process-task]').forEach(button => button.onclick = () => openCallResultModal(button.dataset.processTask, { taskListModal: 'upcoming' }))
+  modal.querySelectorAll('[data-process-task]').forEach(button => button.onclick = () => openTaskExecution(button.dataset.processTask, { taskListModal: 'upcoming' }))
   modal.querySelectorAll('[data-upcoming-patient]').forEach(button => button.onclick = () => { close(); openPatientModal(button.dataset.upcomingPatient) })
 }
 
@@ -2036,7 +2036,7 @@ function renderTasks() {
   document.querySelectorAll('[data-process-task]').forEach(button => {
     button.onclick = event => {
       event.stopPropagation()
-      openCallResultModal(button.dataset.processTask)
+      openTaskExecution(button.dataset.processTask)
     }
   })
 }
@@ -2053,8 +2053,111 @@ function taskRow(task) {
     <div class="task-main"><span>${esc(taskTypeDisplay(task))}</span><strong>${esc(task.title)}</strong><small>${esc(task.note || '')}</small></div>
     <div class="task-patient"><b>${esc(patient?.name || 'Пациент удалён')} ${specialNoteBadge(patient)}</b><span>${esc(patient?.phones?.[0] || '')}</span></div>
     <div class="task-owner"><b>${esc(task.assignee || '—')}</b><span>${isTaskActive(task) ? 'Активна' : isTaskCompleted(task) ? 'Выполнена' : 'Отменена'}</span></div>
-    ${isTaskActive(task) ? `<button class="process-task-btn" data-process-task="${task.id}" title="Указать результат звонка">☎ Обработать</button>` : `<div class="task-result"><b>${formatDateTime(task.completedAt)}</b><span>${esc(task.completedBy || '—')}</span>${task.lastResult ? `<small>${esc(task.lastResult)}</small>` : ''}${task.lastResultComment ? `<small>${esc(task.lastResultComment)}</small>` : ''}</div>`}
+    ${isTaskActive(task) ? `<button class="process-task-btn" data-process-task="${task.id}">${taskExecutionButton(task)}</button>` : `<div class="task-result"><b>${formatDateTime(task.completedAt)}</b><span>${esc(task.completedBy || '—')}</span>${task.lastResult ? `<small>${esc(task.lastResult)}</small>` : ''}${task.lastResultComment ? `<small>${esc(task.lastResultComment)}</small>` : ''}</div>`}
   </article>`
+}
+
+function taskExecutionKind(task) {
+  if (isAppointmentConfirmationTask(task)) return 'confirmation'
+  const source = `${task?.type || ''} ${cleanTaskLabel(task?.title || '')}`.toLowerCase()
+  if (['call','reminder','decision'].includes(task?.type) || /позвон|звонок|напом|уточнить решение/.test(source)) return 'call'
+  if (task?.type === 'write' || /сообщени|написать|whatsapp|telegram/.test(source)) return 'message'
+  if (task?.type === 'request_image' || /снимок|рентген/.test(source)) return 'image'
+  if (['postop_control','implant_check'].includes(task?.type) || /контрол/.test(source)) return 'control'
+  return 'generic'
+}
+
+function taskExecutionButton(task) {
+  return ({
+    confirmation:'✅ Подтвердить', call:'📞 Указать результат', message:'✉ Выполнить',
+    image:'🩻 Получить снимок', control:'🦷 Провести контроль', generic:'✔ Выполнить',
+  })[taskExecutionKind(task)]
+}
+
+function openTaskExecution(taskId, options = {}) {
+  const task = state.tasks.find(item => item.id === taskId)
+  if (!task || !isTaskActive(task)) return
+  const kind = taskExecutionKind(task)
+  if (kind === 'call' || kind === 'confirmation') return openCallResultModal(taskId, options)
+  openSimpleTaskExecution(task, kind, options)
+}
+
+function completeSimpleTask(task, patient, result, comment, options) {
+  const now = new Date().toISOString()
+  completeTaskRecord(task, now, result, comment)
+  patient.history ||= []
+  patient.history.unshift(createHistoryEntry('task_completed', `${cleanTaskLabel(task.title)}.`, { taskType:task.type }))
+  patient.updatedAt = now
+  patient.updatedBy = currentUser.name
+  if (comment) patient.adminNote = comment
+  saveState(`Выполнена задача: ${task.title}`)
+  finishCallResult(options)
+  showToast('Задача отмечена выполненной.')
+}
+
+function rescheduleSimpleTask(task, patient, dueDate, dueTime, comment, options) {
+  const now = new Date().toISOString()
+  task.dueDate = dueDate
+  task.dueAt = `${dueDate}T${dueTime}:00`
+  task.updatedAt = now
+  task.updatedBy = currentUser.name
+  task.history ||= []
+  task.history.push({ id:uid(), at:now, author:currentUser.name, action:'rescheduled', text:[`Перенесена на ${formatDate(dueDate)}, ${dueTime}`, comment].filter(Boolean).join('. ') })
+  patient.history ||= []
+  patient.history.unshift(createHistoryEntry('task', `${cleanTaskLabel(task.title)} перенесена на ${formatDate(dueDate)}, ${dueTime}.`, { taskType:task.type }))
+  patient.updatedAt = now
+  patient.updatedBy = currentUser.name
+  if (comment) patient.adminNote = comment
+  saveState(`Перенесена задача: ${task.title}`)
+  finishCallResult(options)
+  showToast(`Задача перенесена на ${formatDate(dueDate)}, ${dueTime}.`)
+}
+
+function openSimpleTaskExecution(task, kind, options = {}) {
+  const patient = state.patients.find(item => item.id === task.patientId)
+  if (!patient) return
+  const config = {
+    message:{ title:'✉ Сообщение пациенту', question:'Сообщение отправлено?', yes:'Да, отправлено', no:'Нет', result:'Сообщение отправлено' },
+    image:{ title:'🩻 Получение снимка', question:'Снимок получен?', yes:'Да, получен', no:'Нет', result:'Снимок получен' },
+    control:{ title:'🦷 Послеоперационный контроль', question:'Контроль выполнен?', yes:'Да, выполнен', no:'Нет', result:'Контроль выполнен' },
+    generic:{ title:'✔ Выполнение задачи', question:'Выполнить задачу?', yes:'Да', no:'Нет', result:'Задача выполнена' },
+  }[kind]
+  document.querySelector('#simpleTaskExecutionModal')?.remove()
+  const retry = kind !== 'generic'
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="simpleTaskExecutionModal"><div class="dialog simple-task-execution-dialog" role="dialog" aria-modal="true" aria-labelledby="simpleTaskExecutionTitle"><div class="dialog-head"><div><h2 id="simpleTaskExecutionTitle">${config.title}</h2><p>${esc(patient.name)} · ${esc(cleanTaskLabel(task.title))}</p></div><button class="icon-btn" data-close-simple-task>×</button></div><h3 class="call-result-step">${config.question}</h3><div class="call-result-options"><label><input type="radio" name="simpleTaskResult" value="yes"> <span>${config.yes}</span></label><label><input type="radio" name="simpleTaskResult" value="no"> <span>${config.no}</span></label></div>${retry ? `<section class="hidden simple-task-retry" id="simpleTaskRetry"><h3 class="call-result-step">${kind === 'image' ? 'Когда повторить запрос?' : kind === 'control' ? 'Новая дата контроля' : 'Что сделать дальше?'}</h3>${kind === 'message' ? '<div class="call-result-options compact-options"><label><input type="radio" name="simpleRetryMode" value="reschedule" checked> <span>Повторить позже</span></label><label><input type="radio" name="simpleRetryMode" value="new"> <span>Создать новую задачу</span></label></div>' : ''}<div class="custom-datetime-grid">${manualDateMarkup('simpleRetry', 'Дата', localDatePlus(1))}${manualTimeMarkup('simpleRetry', 'Время', '10:00')}</div></section>` : ''}<label class="field call-result-comment"><span>Примечание</span><textarea id="simpleTaskComment" placeholder="Необязательно"></textarea></label><div class="dialog-actions"><button class="btn" data-close-simple-task>Отмена</button><button class="btn primary" id="saveSimpleTaskResult" disabled>Сохранить</button></div></div></div>`)
+  const modal = document.querySelector('#simpleTaskExecutionModal')
+  const close = () => modal.remove()
+  modal.querySelectorAll('[data-close-simple-task]').forEach(button => button.onclick = close)
+  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  if (retry) { setupManualDate(modal, 'simpleRetry'); setupManualTime(modal, 'simpleRetry') }
+  const saveButton = modal.querySelector('#saveSimpleTaskResult')
+  modal.querySelectorAll('[name="simpleTaskResult"]').forEach(radio => radio.onchange = () => {
+    modal.querySelector('#simpleTaskRetry')?.classList.toggle('hidden', radio.value !== 'no')
+    saveButton.disabled = false
+  })
+  saveButton.onclick = () => {
+    const answer = modal.querySelector('[name="simpleTaskResult"]:checked')?.value
+    const comment = modal.querySelector('#simpleTaskComment').value.trim()
+    if (answer === 'yes') { modal.remove(); return completeSimpleTask(task, patient, config.result, comment, options) }
+    if (kind === 'generic') return modal.remove()
+    const dueDate = readManualDate(modal, 'simpleRetry')
+    const dueTime = readManualTime(modal, 'simpleRetry')
+    if (!dueDate || !dueTime) return
+    const createNew = kind === 'image' || (kind === 'message' && modal.querySelector('[name="simpleRetryMode"]:checked')?.value === 'new')
+    modal.remove()
+    if (createNew) {
+      const now = new Date().toISOString()
+      completeTaskRecord(task, now, `${config.question} Нет`, comment)
+      createActionTask(patient, { type:task.type, title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment }, now)
+      patient.history ||= []
+      patient.history.unshift(createHistoryEntry('task', `${cleanTaskLabel(task.title)}: создана повторная задача на ${formatDate(dueDate)}, ${dueTime}.`, { taskType:task.type }))
+      patient.updatedAt = now; patient.updatedBy = currentUser.name
+      saveState(`Создана повторная задача: ${task.title}`)
+      finishCallResult(options)
+      return showToast('Создана повторная задача.')
+    }
+    rescheduleSimpleTask(task, patient, dueDate, dueTime, comment, options)
+  }
 }
 
 function isAppointmentConfirmationTask(task) {
@@ -2080,7 +2183,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     <div class="dialog-head"><div><h2 id="confirmationResultTitle">Подтвердить приём</h2><p>${esc(patient.name)} · приём ${formatDate(appointmentDate)} в ${appointmentTime}</p></div><button class="icon-btn" data-close-confirmation-result>×</button></div>
     <section><h3 class="call-result-step">Удалось дозвониться?</h3><div class="call-result-options"><label><input type="radio" name="confirmationReached" value="yes"> <span>Да</span></label><label><input type="radio" name="confirmationReached" value="no"> <span>Нет</span></label></div></section>
     <section class="hidden" id="confirmationNoContact"><h3 class="call-result-step">Когда позвонить снова?</h3><div class="custom-datetime-grid">${manualDateMarkup('confirmationCall', 'Дата следующего звонка', localDatePlus(1))}${manualTimeMarkup('confirmationCall', 'Время следующего звонка', '10:00')}</div><label class="field"><span>Комментарий</span><textarea id="confirmationNoComment" placeholder="Необязательно"></textarea></label></section>
-    <section class="hidden" id="confirmationReached"><h3 class="call-result-step">Подтвердил запись?</h3><div class="call-result-options"><label><input type="radio" name="appointmentConfirmed" value="yes" checked> <span>Да, запись подтверждена</span></label><label><input type="radio" name="appointmentConfirmed" value="no"> <span>Нет, требуется изменить запись</span></label></div><div class="hidden" id="confirmationReschedule"><div class="custom-datetime-grid">${manualDateMarkup('confirmationAppointment', 'Новая дата приёма', appointmentDate)}${manualTimeMarkup('confirmationAppointment', 'Новое время', appointmentTime)}</div><label class="field"><span>Комментарий</span><textarea id="confirmationMoveComment" placeholder="Например: просил перенести на 15 минут позже"></textarea></label></div></section>
+    <section class="hidden" id="confirmationReached"><h3 class="call-result-step">Подтвердил запись?</h3><div class="call-result-options"><label><input type="radio" name="appointmentConfirmed" value="yes" checked> <span>Да, запись подтверждена</span></label><label><input type="radio" name="appointmentConfirmed" value="no"> <span>Нет</span></label></div><div class="hidden" id="confirmationReschedule"><h3 class="call-result-step">Что сделать?</h3><div class="call-result-options compact-options"><label><input type="radio" name="confirmationNoAction" value="move" checked> <span>Перенести приём</span></label><label><input type="radio" name="confirmationNoAction" value="cancel"> <span>Отменить запись</span></label><label><input type="radio" name="confirmationNoAction" value="retry"> <span>Создать повторное подтверждение</span></label></div><div id="confirmationMoveFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationAppointment', 'Новая дата приёма', appointmentDate)}${manualTimeMarkup('confirmationAppointment', 'Новое время', appointmentTime)}</div></div><div class="hidden" id="confirmationRetryFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationRetry', 'Дата повторного подтверждения', localDatePlus(1))}${manualTimeMarkup('confirmationRetry', 'Время', '10:00')}</div></div><label class="field"><span>Комментарий</span><textarea id="confirmationMoveComment" placeholder="Необязательно"></textarea></label></div></section>
     <div class="dialog-actions"><button class="btn" data-close-confirmation-result>Отмена</button><button class="btn primary" id="saveConfirmationResult" disabled>Сохранить</button></div>
   </div></div>`)
   const modal = document.querySelector('#appointmentConfirmationResult')
@@ -2091,6 +2194,8 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
   setupManualTime(modal, 'confirmationCall')
   setupManualDate(modal, 'confirmationAppointment')
   setupManualTime(modal, 'confirmationAppointment')
+  setupManualDate(modal, 'confirmationRetry')
+  setupManualTime(modal, 'confirmationRetry')
   const saveButton = modal.querySelector('#saveConfirmationResult')
   modal.querySelectorAll('[name="confirmationReached"]').forEach(radio => radio.onchange = () => {
     const reached = radio.value === 'yes'
@@ -2099,6 +2204,10 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     saveButton.disabled = false
   })
   modal.querySelectorAll('[name="appointmentConfirmed"]').forEach(radio => radio.onchange = () => modal.querySelector('#confirmationReschedule').classList.toggle('hidden', radio.value !== 'no'))
+  modal.querySelectorAll('[name="confirmationNoAction"]').forEach(radio => radio.onchange = () => {
+    modal.querySelector('#confirmationMoveFields').classList.toggle('hidden', radio.value !== 'move')
+    modal.querySelector('#confirmationRetryFields').classList.toggle('hidden', radio.value !== 'retry')
+  })
   saveButton.onclick = () => {
     const reached = modal.querySelector('[name="confirmationReached"]:checked')?.value
     if (!reached) return
@@ -2119,10 +2228,25 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
         completeTaskRecord(task, now, 'Приём подтверждён')
         patient.history.unshift(createHistoryEntry('action', `Подтвердила приём на ${formatDate(appointmentDate)} в ${appointmentTime}.`, { actionIcon:'📞', taskType:'call' }))
       } else {
+        const noAction = modal.querySelector('[name="confirmationNoAction"]:checked')?.value || 'move'
+        const comment = modal.querySelector('#confirmationMoveComment').value.trim()
+        if (noAction === 'cancel') {
+          completeTaskRecord(task, now, 'Запись отменена', comment)
+          patient.appointmentDate = ''
+          patient.appointmentAt = null
+          patient.status = '🤔 Думает'
+          patient.history.unshift(createHistoryEntry('action', `Запись на ${formatDate(appointmentDate)} в ${appointmentTime} отменена${comment ? `. ${comment}` : ''}.`, { actionIcon:'📅', taskType:'appointment' }))
+        } else if (noAction === 'retry') {
+          const retryDate = readManualDate(modal, 'confirmationRetry')
+          const retryTime = readManualTime(modal, 'confirmationRetry')
+          if (!retryDate || !retryTime) return
+          completeTaskRecord(task, now, 'Назначено повторное подтверждение', comment)
+          createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:retryDate, dueAt:`${retryDate}T${retryTime}:00`, comment }, now)
+          patient.history.unshift(createHistoryEntry('task', `Повторно подтвердить приём ${formatDate(retryDate)} в ${retryTime}.`, { taskType:'call', actionIcon:'📞' }))
+        } else {
         const newDate = readManualDate(modal, 'confirmationAppointment')
         const newTime = readManualTime(modal, 'confirmationAppointment')
         if (!newDate || !newTime) return
-        const comment = modal.querySelector('#confirmationMoveComment').value.trim()
         completeTaskRecord(task, now, 'Приём перенесён', comment)
         if (comment) patient.adminNote = comment
         patient.appointmentDate = newDate
@@ -2134,9 +2258,10 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
           const duplicate = state.tasks.some(item => item.patientId === patient.id && isTaskActive(item) && isAppointmentConfirmationTask(item) && item.dueDate === deadline.dueDate)
           if (!duplicate) createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:'Подтвердить приём' }, now)
         }
+        }
       }
     }
-    patient.status = '📅 Записан на приём'
+    if (patient.appointmentDate) patient.status = '📅 Записан на приём'
     patient.updatedAt = now
     patient.updatedBy = currentUser.name
     saveState(`Обработано подтверждение приёма: ${patient.name}`)
