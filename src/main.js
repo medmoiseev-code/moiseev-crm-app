@@ -261,7 +261,7 @@ function taskTypeDisplay(task) {
   const label = TASK_TYPES.find(item => item.value === task?.type)?.label || task?.title || 'Задача'
   if (task?.type !== 'reminder') return label
   if (task.reminderTarget === 'doctor') return '👨‍⚕️ Напоминание доктору'
-  return `${task.reminderMethod === 'write' ? '✈️' : '📞'} Напоминание пациенту`
+  return `${task.reminderMethod === 'write' ? '➤' : '📞'} Напоминание пациенту`
 }
 
 function getUpcomingActiveTasks(tasks = state.tasks) {
@@ -311,7 +311,7 @@ function compactTaskDue(task) {
 }
 
 function compactTaskLabel(task) {
-  if (task?.type === 'reminder' && task.reminderMethod === 'write') return `✈️ ${cleanTaskLabel(task.title || 'Напоминание пациенту')}`
+  if (task?.type === 'reminder' && task.reminderMethod === 'write') return `➤ ${cleanTaskLabel(task.title || 'Напоминание пациенту')}`
   const labels = { call:'📞 Позвонить', reminder:'🔔 Напомнить', invite_checkup:'🦷 Профосмотр', appointment:'📅 Записать на приём' }
   const fallback = labels[task?.type] || TASK_TYPES.find(item => item.value === task?.type)?.label || 'Задача'
   const title = String(task?.title || '').trim()
@@ -454,7 +454,7 @@ function createHistoryEntry(actionType, text, details = {}) {
 }
 
 function cleanTaskLabel(value = '') {
-  return String(value).replace(/^\s*[📞🦷📅🔔💬✈✅✍️⏳🆕🤔🔄❌🚫📄🪡📷️]+\s*/u, '').trim()
+  return String(value).replace(/^\s*[📞🦷📅🔔💬➤✅✍️⏳🆕🤔🔄❌🚫📄🪡📷️]+\s*/u, '').trim()
 }
 
 function taskHistoryText(type, title, dueDate, comment = '') {
@@ -1959,14 +1959,14 @@ function openUniversalReminderModal(patient) {
     const comment = modal.querySelector('#universalReminderComment').value.trim()
     if (!dueDate || !dueTime) return
     if (!comment) { modal.querySelector('#universalReminderCommentError').textContent = 'Комментарий обязателен'; return }
-    const title = target === 'doctor' ? '👨‍⚕️ Напоминание доктору' : method === 'write' ? '✈️ Напоминание пациенту' : '📞 Напоминание пациенту'
+    const title = target === 'doctor' ? '👨‍⚕️ Напоминание доктору' : method === 'write' ? '➤ Напоминание пациенту' : '📞 Напоминание пациенту'
     const now = new Date().toISOString()
     const task = createActionTask(patient, { type:'reminder', title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment, reminderTarget:target }, now)
     task.reminderMethod = method
     patient.updatedAt = now
     patient.updatedBy = currentUser.name
     patient.history ||= []
-    patient.history.unshift(createHistoryEntry('task', `${target === 'doctor' ? 'Создано напоминание доктору.' : 'Создано напоминание пациенту.'} ${formatDate(dueDate)} в ${dueTime}.`, { actionIcon:target === 'doctor' ? '👨‍⚕️' : method === 'write' ? '✈️' : '📞', taskType:'reminder' }))
+    patient.history.unshift(createHistoryEntry('task', `${target === 'doctor' ? 'Создано напоминание доктору.' : 'Создано напоминание пациенту.'} ${formatDate(dueDate)} в ${dueTime}.`, { actionIcon:target === 'doctor' ? '👨‍⚕️' : method === 'write' ? '➤' : '📞', taskType:'reminder' }))
     saveState(`Создано напоминание: ${patient.name}`)
     modal.remove()
     renderPatients()
@@ -2364,7 +2364,7 @@ function taskExecutionKind(task) {
 function taskExecutionButton(task) {
   if (task?.type === 'reminder') {
     if (task.reminderTarget === 'doctor') return '👨‍⚕️ Выполнить'
-    return task.reminderMethod === 'write' ? '✈️ Выполнить' : '📞 Выполнить'
+    return task.reminderMethod === 'write' ? '<span class="telegram-task-icon" aria-hidden="true">➤</span> Выполнить' : '📞 Выполнить'
   }
   return ({
     confirmation:'✅ Подтвердить', call:'📞 Указать результат', message:'✉ Выполнить',
