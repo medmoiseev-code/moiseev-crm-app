@@ -2814,6 +2814,7 @@ function guardTaskResultSave(modal, handler) {
 function openReminderResultModal(task, options = {}) {
   const patient = state.patients.find(item => item.id === task.patientId)
   if (!patient) return
+  const initialComment = task.note || task.comment || ''
   document.querySelector('#reminderResultModal')?.remove()
   const results = [
     ['appointment','✅ Записали на приём'],
@@ -2823,7 +2824,7 @@ function openReminderResultModal(task, options = {}) {
     <div class="dialog-head"><div><h2 id="reminderResultTitle">Чем закончилось напоминание?</h2><p>${esc(patient.name)} · ${esc(task.note || task.comment || '')}</p></div><button class="icon-btn" data-close-reminder-result>×</button></div>
     <div class="call-result-options reminder-result-options">${results.map(([value,label]) => `<label><input type="radio" name="reminderResult" value="${value}"> <span>${label}</span></label>`).join('')}</div>
     <section class="hidden reminder-repeat-fields" id="reminderRepeatFields"><h3 class="call-result-step" id="reminderNextDateTitle">Новая дата напоминания</h3><div class="custom-datetime-grid">${manualDateMarkup('reminderRepeat', 'Дата', localDatePlus(1))}${manualTimeMarkup('reminderRepeat', 'Время', '10:00')}</div></section>
-    <label class="field call-result-comment"><span>Комментарий</span><textarea id="reminderResultComment" placeholder="Необязательно"></textarea><small class="form-error" id="reminderResultError"></small></label>
+    <label class="field call-result-comment"><span>Комментарий</span><textarea id="reminderResultComment" placeholder="Необязательно">${esc(initialComment)}</textarea><small class="form-error" id="reminderResultError"></small></label>
     <section class="next-action-preview hidden" id="reminderNextActionPreview"><strong>✓ Следующее действие</strong><p></p></section><div class="dialog-actions"><button class="btn" data-close-reminder-result>Отмена</button><button class="btn primary" id="saveReminderResult" disabled>Сохранить</button></div>
   </div></div>`)
   const modal = document.querySelector('#reminderResultModal')
@@ -2863,7 +2864,7 @@ function openReminderResultModal(task, options = {}) {
       const dueTime = readManualTime(modal, 'reminderRepeat')
       if (!dueDate || !dueTime) return
       completeTaskRecord(task, now, result === 'repeat' ? 'Напомнить ещё раз' : 'Отложили', comment)
-      const inheritedComment = [task.note || task.comment || '', comment].filter(Boolean).join(' ')
+      const inheritedComment = [...new Set([task.note || task.comment || '', comment].filter(Boolean))].join(' ')
       const nextTask = result === 'postponed'
         ? movePatientToWaitlist(patient, task, dueDate, dueTime, inheritedComment, now)
         : createActionTask(patient, { type:'reminder', title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient' }, now)
