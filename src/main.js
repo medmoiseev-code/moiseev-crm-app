@@ -3164,7 +3164,7 @@ function openCallResultModal(taskId, options = {}) {
         finishCallResult(options)
         showToast('Задача отмечена выполненной.')
       }
-      return userSettings.tasks.confirmCompletion ? openTaskCompletionConfirmation(complete) : complete()
+      return complete()
     }
     if (!selectedFollowup) return
     modal.remove()
@@ -3172,16 +3172,6 @@ function openCallResultModal(taskId, options = {}) {
     finishCallResult(options)
     showToast(`Задача перенесена: ${selectedFollowup.description}.`)
   }
-}
-
-function openTaskCompletionConfirmation(onConfirm) {
-  document.querySelector('#taskCompletionConfirm')?.remove()
-  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="taskCompletionConfirm"><div class="dialog confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="taskConfirmTitle"><div class="dialog-head"><div><h2 id="taskConfirmTitle">Сохранить выбранный результат?</h2><p>Результат будет записан в историю задачи.</p></div></div><div class="dialog-actions"><button class="btn" id="cancelTaskCompletion">Отмена</button><button class="btn danger-confirm" id="confirmTaskCompletion">Подтвердить результат</button></div></div></div>`)
-  const confirmation = document.querySelector('#taskCompletionConfirm')
-  const cancel = confirmation.querySelector('#cancelTaskCompletion')
-  cancel.onclick = () => confirmation.remove()
-  confirmation.querySelector('#confirmTaskCompletion').onclick = () => { confirmation.remove(); onConfirm() }
-  cancel.focus()
 }
 
 function collectContactOutcome(modal, status) {
