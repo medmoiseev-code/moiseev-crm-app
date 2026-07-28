@@ -64,7 +64,7 @@ const REFUSAL_REASONS = [
 ]
 
 const DOCTORS = ['Моисеев Г.А.', 'Климов Ф.С.']
-const STORAGE_KEY = 'moiseev_admin_crm_v04'
+const STORAGE_KEY = 'moiseev_admin_crm_v05'
 const SNAPSHOT_KEY = 'moiseev_admin_crm_snapshots_v04'
 const SESSION_KEY = 'moiseev_admin_crm_user'
 const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
