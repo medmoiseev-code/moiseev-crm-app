@@ -1880,7 +1880,7 @@ function compactPatientTaskMarkup(task) {
   return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time>${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">${taskExecutionButton(task)}</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
 }
 
-function openPatientModal(patientId = null) {
+function openPatientModal(patientId = null, options = {}) {
   const original = state.patients.find(p => p.id === patientId)
   const patient = original ? cloneData(original) : {
     id: uid(), name: '', phones: [''], doctors: ['Моисеев Г.А.'], birthDate: '', appointmentDate: '',
@@ -2020,7 +2020,8 @@ function openPatientModal(patientId = null) {
       patientSort = 'createdDesc'
       localStorage.setItem(PATIENT_SORT_KEY, patientSort)
     }
-    renderPatients()
+    if (typeof options.onSaved === 'function') options.onSaved(patient)
+    else renderPatients()
   }
 }
 
@@ -2466,7 +2467,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   }
   document.querySelector('#waitlistEntryModal')?.remove()
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="waitlistEntryModal"><div class="dialog waitlist-dialog" role="dialog" aria-modal="true" aria-labelledby="waitlistDialogTitle"><div class="dialog-head"><div><h2 id="waitlistDialogTitle">${existing ? 'Изменить запись ожидания' : 'Добавить в лист ожидания'}</h2><p>Пациент остаётся в текущем этапе, его задачи не изменяются</p></div><button class="icon-btn" data-close-waitlist>×</button></div><div class="waitlist-form">
-    <label class="field span-2"><span>Пациент</span><select id="waitlistPatient" ${patientId ? 'disabled' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort(comparePatientNames).map(item => `<option value="${item.id}" ${entry.patientId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.phones?.[0] || 'без телефона')}</option>`).join('')}</select></label>
+    <label class="field span-2"><span>Пациент</span><div class="waitlist-patient-picker"><select id="waitlistPatient" ${patientId ? 'disabled' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort(comparePatientNames).map(item => `<option value="${item.id}" ${entry.patientId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.phones?.[0] || 'без телефона')}</option>`).join('')}</select>${patientId ? '' : '<button type="button" class="btn" id="createWaitlistPatient">+ Новый пациент</button>'}</div></label>
     <label class="field"><span>Доктор</span><select id="waitlistDoctor"><option value="">Не указан</option>${[...new Set([...DOCTORS, entry.doctor])].filter(Boolean).map(value => `<option ${entry.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
     <label class="field"><span>Администратор</span><select id="waitlistAdministrator">${USERS.filter(user => user.role === 'admin').map(user => `<option ${user.name === (entry.administrator || entry.addedBy || currentUser.name) ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label>
     <label class="field"><span>Что ожидает</span><select id="waitlistTreatment">${WAITLIST_TREATMENTS.map(value => `<option ${entry.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
@@ -2484,6 +2485,16 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   closeOnBackdropClick(modal, close)
   modal.querySelector('#waitlistTreatment').onchange = event => modal.querySelector('#waitlistCustomTreatmentField').classList.toggle('hidden', event.target.value !== 'Другое')
   modal.querySelector('#waitlistDuration').onchange = event => modal.querySelector('#waitlistCustomDurationField').classList.toggle('hidden', event.target.value !== 'custom')
+  modal.querySelector('#createWaitlistPatient')?.addEventListener('click', () => openPatientModal(null, { onSaved:newPatient => {
+    const select = modal.querySelector('#waitlistPatient')
+    select.insertAdjacentHTML('beforeend', `<option value="${newPatient.id}">${esc(newPatient.name)} · ${esc(newPatient.phones?.[0] || 'без телефона')}</option>`)
+    select.value = newPatient.id
+    const doctor = newPatient.doctors?.[0]
+    const doctorSelect = modal.querySelector('#waitlistDoctor')
+    if (doctor && ![...doctorSelect.options].some(option => option.value === doctor)) doctorSelect.add(new Option(doctor, doctor))
+    if (doctor) doctorSelect.value = doctor
+    showToast(`Пациент «${newPatient.name}» создан и выбран.`)
+  } }))
   modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); removeWaitlistEntry(existing.id) })
   modal.querySelector('#saveWaitlistEntry').onclick = () => {
     const selectedPatientId = modal.querySelector('#waitlistPatient').value
