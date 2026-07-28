@@ -3039,7 +3039,8 @@ function openCallResultModal(taskId, options = {}) {
       <label><input type="radio" name="callResult" value="requested"> <span>Пациент попросил перезвонить</span></label>
       <label><input type="radio" name="callResult" value="unavailable"> <span>Номер недоступен / выключен</span></label>
       <label><input type="radio" name="callResult" value="rejected"> <span>Сбросил звонок</span></label>
-      <label><input type="radio" name="callResult" value="messenger"> <span>Связались в мессенджере</span></label>
+      <label><input type="radio" name="callResult" value="messenger"> <span>Связались в мессенджере — задача выполнена</span></label>
+      <label><input type="radio" name="callResult" value="messenger_no_reply"> <span>В мессенджере не отвечает</span></label>
     </div>
     <section class="followup-section hidden" id="followupSection"><h3 class="call-result-step">2. Когда связаться повторно?</h3><div class="followup-buttons">
       <button type="button" data-followup="minutes:15">Через 15 минут</button><button type="button" data-followup="minutes:30">Через 30 минут</button><button type="button" data-followup="minutes:60">Через 1 час</button><button type="button" data-followup="later">Сегодня позже</button><button type="button" data-followup="tomorrow">Завтра</button><button type="button" data-followup="days:3">Через 3 дня</button><button type="button" data-followup="custom">Выбрать дату и время</button>
@@ -3075,7 +3076,7 @@ function openCallResultModal(taskId, options = {}) {
   const updateSaveState = () => {
     const result = modal.querySelector('[name="callResult"]:checked')?.value
     let valid = Boolean(result)
-    if (result === 'completed') {
+    if (['completed','messenger'].includes(result)) {
       valid = Boolean(outcomeStatus.value)
       if (outcomeStatus.value === 'appointment') valid = Boolean(modal.querySelector('#outcomeAppointmentDate').value && modal.querySelector('#outcomeAppointmentTime').value)
       if (outcomeStatus.value === 'reminder') valid = Boolean(modal.querySelector('#outcomeReminderDate').value && modal.querySelector('#outcomeReminderTime').value && modal.querySelector('#outcomeReminderText').value.trim())
@@ -3097,7 +3098,7 @@ function openCallResultModal(taskId, options = {}) {
     updateSaveState()
   }
   modal.querySelectorAll('[name="callResult"]').forEach(radio => radio.onchange = () => {
-    const completed = radio.value === 'completed'
+    const completed = ['completed','messenger'].includes(radio.value)
     followupSection.classList.toggle('hidden', completed)
     outcomeSection.classList.toggle('hidden', !completed)
     if (completed) { selectedFollowup = null; selectedLabel.textContent = '' }
@@ -3180,11 +3181,11 @@ function openCallResultModal(taskId, options = {}) {
     const result = modal.querySelector('[name="callResult"]:checked')?.value
     if (!result) return alert('Выберите результат звонка')
     const comment = modal.querySelector('#callResultComment').value.trim()
-    if (result === 'completed' && outcomeStatus.value === 'other' && modal.querySelector('#outcomeOtherAction').value === 'repeat') {
+    if (['completed','messenger'].includes(result) && outcomeStatus.value === 'other' && modal.querySelector('#outcomeOtherAction').value === 'repeat') {
       if (!selectedFollowup) return
       modal.remove(); applyCallResult(task, patient, 'requested', selectedFollowup, comment); finishCallResult(options); showToast(`Задача перенесена: ${selectedFollowup.description}.`); return
     }
-    if (result === 'completed') {
+    if (['completed','messenger'].includes(result)) {
       const outcome = collectContactOutcome(modal, outcomeStatus.value)
       if (!outcome) return
       const complete = () => {
@@ -3235,7 +3236,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   const attemptedAt = new Date().toISOString()
   const previousDueDate = task.dueDate || ''
   const previousDueAt = task.dueAt || null
-  const resultLabels = { completed: 'Дозвонились', no_contact: 'Не дозвонились', requested: 'Пациент попросил перезвонить', unavailable: 'Номер недоступен / выключен', rejected: 'Сбросил звонок', messenger: 'Связались в мессенджере' }
+  const resultLabels = { completed: 'Дозвонились', no_contact: 'Не дозвонились', requested: 'Пациент попросил перезвонить', unavailable: 'Номер недоступен / выключен', rejected: 'Сбросил звонок', messenger: 'Связались в мессенджере', messenger_no_reply:'В мессенджере не отвечает' }
   const resultLabel = resultLabels[result] || 'Результат звонка'
   task.contactAttempts ||= []
   task.contactAttempts.push({ id: uid(), attemptedAt, attemptedBy: currentUser.name, result: resultLabel, previousDueDate, previousDueAt, newDueDate: followup?.dueDate || null, newDueAt: followup?.dueAt || null, comment })
@@ -3247,7 +3248,8 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   if (comment) {
     patient.adminNote = comment
   }
-  if (result === 'completed') {
+  const contactCompleted = ['completed','messenger'].includes(result)
+  if (contactCompleted) {
     task.status = 'completed'
     task.completedAt = attemptedAt
     task.completedBy = currentUser.name
@@ -3293,8 +3295,8 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   task.history.push({ id:uid(), at:attemptedAt, author:currentUser.name, action:task.status === 'completed' ? 'completed' : 'rescheduled', text:[resultLabel, followup?.description || '', comment].filter(Boolean).join('. ') })
   patient.updatedAt = attemptedAt
   patient.updatedBy = currentUser.name
-  saveState(result === 'completed' ? `Сохранён результат задачи: ${task.title}` : `Сохранён результат и создана новая задача: ${task.title}`)
-  if (result === 'completed' && outcome?.status === 'appointment') offerWaitlistRemoval(patient.id)
+  saveState(contactCompleted ? `Сохранён результат задачи: ${task.title}` : `Сохранён результат и создана новая задача: ${task.title}`)
+  if (contactCompleted && outcome?.status === 'appointment') offerWaitlistRemoval(patient.id)
 }
 
 function finishCallResult(options) {
