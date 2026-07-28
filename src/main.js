@@ -3090,7 +3090,6 @@ function openCallResultModal(taskId, options = {}) {
   modal.querySelector('#outcomeAppointmentDate').onchange = event => { modal.querySelector('#outcomeAppointmentDateText').value = event.target.value ? formatDate(event.target.value) : ''; updateSaveState() }
   modal.querySelector('#outcomeAppointmentDateText').onblur = event => { const parsed = parseManualDate(event.target.value); if (!parsed.error && parsed.iso) { event.target.value = parsed.formatted; modal.querySelector('#outcomeAppointmentDate').value = parsed.iso } updateSaveState() }
   modal.querySelectorAll('#contactOutcome input,#contactOutcome textarea,#contactOutcome select,#callResultComment').forEach(control => control.addEventListener('input', updateSaveState))
-  modal.querySelector('#callResultCalendar').onclick = () => { try { picker.showPicker() } catch { picker.click() } }
   picker.onchange = () => { textInput.value = picker.value ? formatDate(picker.value) : ''; error.textContent = '' }
   textInput.oninput = () => { error.textContent = ''; selectedFollowup = null; updateSaveState() }
   textInput.onblur = () => {
