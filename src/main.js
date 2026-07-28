@@ -31,6 +31,7 @@ const TASK_TYPES = [
   { value: 'postop_control', label: '🪡 Контроль после операции' },
   { value: 'implant_check', label: '🦷 Осмотр импланта' },
   { value: 'request_image', label: '📷 Запросить снимок' },
+  { value: 'waitlist', label: '⏳ Лист ожидания' },
   { value: 'other', label: 'Другое' },
 ]
 
@@ -2512,6 +2513,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
       priority:modal.querySelector('#waitlistPriority').value, administrator:modal.querySelector('#waitlistAdministrator').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
+    ensureWaitlistTask(existing || entry)
     saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
     updateWaitlistNavCount()
     close()
@@ -2522,10 +2524,35 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   }
 }
 
+function ensureWaitlistTask(entry) {
+  const now = new Date().toISOString()
+  const patient = state.patients.find(item => item.id === entry.patientId)
+  const treatment = waitlistTreatmentLabel(entry)
+  const details = [treatment, entry.comment].filter(Boolean).join(' · ')
+  let task = state.tasks.find(item => item.waitlistEntryId === entry.id)
+    || state.tasks.find(item => item.patientId === entry.patientId && item.type === 'waitlist' && isTaskActive(item))
+  if (!task) {
+    task = {
+      id:uid(), patientId:entry.patientId, waitlistEntryId:entry.id, type:'waitlist', title:'⏳ Лист ожидания',
+      dueDate:'', dueAt:null, comment:details, note:details, assignee:entry.administrator || currentUser.name,
+      status:'active', completedAt:null, createdAt:now, createdBy:currentUser.name,
+    }
+    state.tasks.push(task)
+    patient?.history?.unshift(createHistoryEntry('task', 'Создана задача «Лист ожидания».', { actionIcon:'⏳', taskType:'waitlist' }))
+  } else {
+    Object.assign(task, { waitlistEntryId:entry.id, title:'⏳ Лист ожидания', comment:details, note:details,
+      assignee:entry.administrator || task.assignee || currentUser.name, status:'active', completedAt:null, updatedAt:now, updatedBy:currentUser.name })
+  }
+  return task
+}
+
 function removeWaitlistEntry(entryId, skipConfirm = false) {
   const entry = activeWaitlistEntries().find(item => item.id === entryId)
   if (!entry || (!skipConfirm && !confirm('Удалить запись из листа ожидания?'))) return false
   entry.status = 'removed'; entry.removedAt = new Date().toISOString(); entry.removedBy = currentUser.name
+  state.tasks.filter(task => task.waitlistEntryId === entry.id && isTaskActive(task)).forEach(task => {
+    task.status = 'completed'; task.completedAt = entry.removedAt; task.completedBy = currentUser.name
+  })
   saveState('Удалена запись из листа ожидания')
   renderShell()
   return true
