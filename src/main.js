@@ -2472,7 +2472,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     <section class="waitlist-new-patient span-2 hidden" id="waitlistNewPatientFields"><div class="waitlist-new-patient-head"><h3>Новый пациент</h3><small>Карточка пациента и запись ожидания сохранятся одновременно</small></div><div class="waitlist-new-patient-grid">
       <label class="field span-2"><span>ФИО</span><input id="waitlistPatientName" placeholder="Фамилия Имя Отчество"></label>
       <label class="field"><span>Телефон</span><input id="waitlistPatientPhone1" placeholder="+7 900 000-00-00"></label><label class="field"><span>Дополнительный телефон</span><input id="waitlistPatientPhone2"></label>
-      <div class="patient-birth-field">${manualDateMarkup('waitlistBirth', 'Дата рождения', '')}</div><div class="patient-appointment-fields">${manualDateMarkup('waitlistAppointment', 'Дата приёма', '')}${manualTimeMarkup('waitlistAppointment', 'Время приёма', '')}</div>
+      <div class="patient-birth-field span-2">${manualDateMarkup('waitlistBirth', 'Дата рождения', '')}</div>
       <label class="field span-2"><span>Примечание</span><textarea id="waitlistPatientNote" rows="3" placeholder="Дополнительная информация о пациенте"></textarea></label>
       <section class="special-note-card waitlist-special-note span-2"><div class="special-note-heading"><strong><span class="special-note-badge static"><span>!</span></span> Особое примечание</strong></div><label class="field special-note-editor"><textarea id="waitlistPatientSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="waitlistSpecialNoteCounter">0</span>/200 · Только короткая важная информация</small></label></section>
     </div></section>
@@ -2488,8 +2488,6 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   </div><div class="dialog-actions">${existing ? '<button class="btn danger-text" id="deleteWaitlistEntry">Удалить</button><span></span>' : '<span></span>'}<button class="btn" data-close-waitlist>Отмена</button><button class="btn primary" id="saveWaitlistEntry">Сохранить</button></div></div></div>`)
   const modal = document.querySelector('#waitlistEntryModal')
   setupManualDate(modal, 'waitlistBirth')
-  setupManualDate(modal, 'waitlistAppointment')
-  setupManualTime(modal, 'waitlistAppointment')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-waitlist]').forEach(button => button.onclick = close)
   closeOnBackdropClick(modal, close)
@@ -2517,15 +2515,11 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
       if (duplicate && !confirm(`Пациент «${duplicate.name}» уже есть в базе. Всё равно создать новую карточку?`)) return
       const birthDate = readManualDate(modal, 'waitlistBirth', false)
       if (birthDate === null) return
-      const appointmentDate = readManualDate(modal, 'waitlistAppointment', false)
-      if (appointmentDate === null) return
-      const appointmentTime = appointmentDate ? readManualTime(modal, 'waitlistAppointment') : readManualTime(modal, 'waitlistAppointment', false)
-      if (appointmentTime === null) return
       const now = new Date().toISOString()
       const note = modal.querySelector('#waitlistPatientNote').value.trim()
       const specialNote = modal.querySelector('#waitlistPatientSpecialNote').value.trim()
       newPatient = { id:uid(), name, phones:[modal.querySelector('#waitlistPatientPhone1').value.trim(), modal.querySelector('#waitlistPatientPhone2').value.trim()].filter(Boolean),
-        doctors:[modal.querySelector('#waitlistDoctor').value].filter(Boolean), birthDate, appointmentDate, appointmentAt:appointmentDate ? `${appointmentDate}T${appointmentTime}:00` : null,
+        doctors:[modal.querySelector('#waitlistDoctor').value].filter(Boolean), birthDate, appointmentDate:'', appointmentAt:null,
         doctorComment:'', specialNote, specialNoteUpdatedAt:specialNote ? now : null, specialNoteUpdatedBy:specialNote ? currentUser.name : '', status:'🆕 Новый', adminNote:note, urgent:false, createdAt:now, updatedAt:now, updatedBy:currentUser.name, externalId:null,
         history:[createHistoryEntry('system', 'Создана карточка пациента через лист ожидания')] }
       if (note) newPatient.history.unshift(createHistoryEntry('admin_comment', note))
