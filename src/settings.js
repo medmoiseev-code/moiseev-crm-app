@@ -23,7 +23,7 @@ export const defaultUserSettings = () => ({
   calendar: { firstDay:'monday', dateFormat:'long', timeFormat:'24', timeStep:15, weekends:true, highlightToday:true },
 })
 
-export const defaultSystemSettings = () => ({ version:1, clinicName:'StomX CRM', logo:'S', brandColor:'#6c8cff', workStart:'09:00', workEnd:'18:00', workDays:[1,2,3,4,5], holidays:[], taskTypes:[], patientStatuses:[], commentTemplates:[], taskTemplates:[], transferReasons:[], rolePermissions:{ admin:['patients','tasks','worktime'], manager:['all'] }, defaultTheme:'moiseev' })
+export const defaultSystemSettings = () => ({ version:1, clinicName:'Axio SRM', logo:'A', brandColor:'#6c8cff', workStart:'09:00', workEnd:'18:00', workDays:[1,2,3,4,5], holidays:[], taskTypes:[], patientStatuses:[], commentTemplates:[], taskTemplates:[], transferReasons:[], rolePermissions:{ admin:['patients','tasks','worktime'], manager:['all'] }, defaultTheme:'moiseev' })
 
 function merge(base, saved) {
   const output = { ...base, ...(saved || {}) }

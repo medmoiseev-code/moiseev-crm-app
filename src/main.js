@@ -593,8 +593,8 @@ function renderLogin() {
   app.innerHTML = `
     <main class="login-screen">
       <section class="login-card">
-        <div class="logo-mark">M</div>
-        <h1>StomX CRM</h1>
+        <div class="logo-mark">A</div>
+        <h1>Axio SRM</h1>
         <p>Выберите сотрудника. Пароли подключим позже.</p>
         <div class="user-grid">
           ${USERS.map(user => `
