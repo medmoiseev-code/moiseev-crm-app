@@ -2469,6 +2469,13 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   document.querySelector('#waitlistEntryModal')?.remove()
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="waitlistEntryModal"><div class="dialog waitlist-dialog" role="dialog" aria-modal="true" aria-labelledby="waitlistDialogTitle"><div class="dialog-head"><div><h2 id="waitlistDialogTitle">${existing ? 'Изменить запись ожидания' : 'Добавить в лист ожидания'}</h2><p>Пациент остаётся в текущем этапе, его задачи не изменяются</p></div><button class="icon-btn" data-close-waitlist>×</button></div><div class="waitlist-form">
     <label class="field span-2"><span>Пациент</span><div class="waitlist-patient-picker"><select id="waitlistPatient" ${patientId ? 'disabled' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort(comparePatientNames).map(item => `<option value="${item.id}" ${entry.patientId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.phones?.[0] || 'без телефона')}</option>`).join('')}</select>${patientId ? '' : '<button type="button" class="btn" id="createWaitlistPatient">+ Новый пациент</button>'}</div></label>
+    <section class="waitlist-new-patient span-2 hidden" id="waitlistNewPatientFields"><div class="waitlist-new-patient-head"><h3>Новый пациент</h3><small>Карточка пациента и запись ожидания сохранятся одновременно</small></div><div class="waitlist-new-patient-grid">
+      <label class="field span-2"><span>ФИО</span><input id="waitlistPatientName" placeholder="Фамилия Имя Отчество"></label>
+      <label class="field"><span>Телефон</span><input id="waitlistPatientPhone1" placeholder="+7 900 000-00-00"></label><label class="field"><span>Дополнительный телефон</span><input id="waitlistPatientPhone2"></label>
+      <div class="patient-birth-field">${manualDateMarkup('waitlistBirth', 'Дата рождения', '')}</div><div class="patient-appointment-fields">${manualDateMarkup('waitlistAppointment', 'Дата приёма', '')}${manualTimeMarkup('waitlistAppointment', 'Время приёма', '')}</div>
+      <label class="field span-2"><span>Примечание</span><textarea id="waitlistPatientNote" rows="3" placeholder="Дополнительная информация о пациенте"></textarea></label>
+      <label class="field span-2"><span>Особое примечание</span><textarea id="waitlistPatientSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="waitlistSpecialNoteCounter">0</span>/200</small></label>
+    </div></section>
     <label class="field"><span>Доктор</span><select id="waitlistDoctor"><option value="">Не указан</option>${[...new Set([...DOCTORS, entry.doctor])].filter(Boolean).map(value => `<option ${entry.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
     <label class="field"><span>Администратор</span><select id="waitlistAdministrator">${USERS.filter(user => user.role === 'admin').map(user => `<option ${user.name === (entry.administrator || entry.addedBy || currentUser.name) ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label>
     <label class="field"><span>Что ожидает</span><select id="waitlistTreatment">${WAITLIST_TREATMENTS.map(value => `<option ${entry.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
@@ -2481,30 +2488,52 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     <label class="field span-2"><span>Комментарий</span><textarea id="waitlistComment" rows="4" placeholder="Дополнительная информация">${esc(entry.comment || '')}</textarea></label>
   </div><div class="dialog-actions">${existing ? '<button class="btn danger-text" id="deleteWaitlistEntry">Удалить</button><span></span>' : '<span></span>'}<button class="btn" data-close-waitlist>Отмена</button><button class="btn primary" id="saveWaitlistEntry">Сохранить</button></div></div></div>`)
   const modal = document.querySelector('#waitlistEntryModal')
+  setupManualDate(modal, 'waitlistBirth')
+  setupManualDate(modal, 'waitlistAppointment')
+  setupManualTime(modal, 'waitlistAppointment')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-waitlist]').forEach(button => button.onclick = close)
   closeOnBackdropClick(modal, close)
   modal.querySelector('#waitlistTreatment').onchange = event => modal.querySelector('#waitlistCustomTreatmentField').classList.toggle('hidden', event.target.value !== 'Другое')
   modal.querySelector('#waitlistDuration').onchange = event => modal.querySelector('#waitlistCustomDurationField').classList.toggle('hidden', event.target.value !== 'custom')
-  modal.querySelector('#createWaitlistPatient')?.addEventListener('click', () => openPatientModal(null, { onSaved:newPatient => {
-    const select = modal.querySelector('#waitlistPatient')
-    select.insertAdjacentHTML('beforeend', `<option value="${newPatient.id}">${esc(newPatient.name)} · ${esc(newPatient.phones?.[0] || 'без телефона')}</option>`)
-    select.value = newPatient.id
-    const doctor = newPatient.doctors?.[0]
-    const doctorSelect = modal.querySelector('#waitlistDoctor')
-    if (doctor && ![...doctorSelect.options].some(option => option.value === doctor)) doctorSelect.add(new Option(doctor, doctor))
-    if (doctor) doctorSelect.value = doctor
-    if (!newPatient.appointmentDate) {
-      Object.assign(entry, { patientId:newPatient.id, doctor:doctor || '', administrator:modal.querySelector('#waitlistAdministrator').value })
-      ensureWaitlistTask(entry)
-      saveState(`Создан пациент с задачей «Лист ожидания»: ${newPatient.name}`)
-      showToast(`Пациент «${newPatient.name}» создан. Назначена задача «Лист ожидания».`)
-    } else showToast(`Пациент «${newPatient.name}» создан и выбран.`)
-  } }))
+  modal.querySelector('#createWaitlistPatient')?.addEventListener('click', event => {
+    const fields = modal.querySelector('#waitlistNewPatientFields')
+    const opening = fields.classList.contains('hidden')
+    fields.classList.toggle('hidden', !opening)
+    modal.querySelector('#waitlistPatient').disabled = opening
+    if (opening) modal.querySelector('#waitlistPatient').value = ''
+    event.currentTarget.textContent = opening ? 'Выбрать из списка' : '+ Новый пациент'
+    if (opening) modal.querySelector('#waitlistPatientName').focus()
+  })
+  modal.querySelector('#waitlistPatientSpecialNote')?.addEventListener('input', event => { modal.querySelector('#waitlistSpecialNoteCounter').textContent = event.target.value.length })
   modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); removeWaitlistEntry(existing.id) })
   modal.querySelector('#saveWaitlistEntry').onclick = () => {
-    const selectedPatientId = modal.querySelector('#waitlistPatient').value
-    if (!selectedPatientId) return alert('Выберите пациента')
+    const creatingPatient = !modal.querySelector('#waitlistNewPatientFields')?.classList.contains('hidden')
+    let selectedPatientId = modal.querySelector('#waitlistPatient').value
+    let newPatient = null
+    if (creatingPatient) {
+      const name = modal.querySelector('#waitlistPatientName').value.trim()
+      if (!name) return alert('Укажите ФИО пациента')
+      const duplicate = state.patients.find(item => (item.name || '').trim().toLowerCase() === name.toLowerCase())
+      if (duplicate && !confirm(`Пациент «${duplicate.name}» уже есть в базе. Всё равно создать новую карточку?`)) return
+      const birthDate = readManualDate(modal, 'waitlistBirth', false)
+      if (birthDate === null) return
+      const appointmentDate = readManualDate(modal, 'waitlistAppointment', false)
+      if (appointmentDate === null) return
+      const appointmentTime = appointmentDate ? readManualTime(modal, 'waitlistAppointment') : readManualTime(modal, 'waitlistAppointment', false)
+      if (appointmentTime === null) return
+      const now = new Date().toISOString()
+      const note = modal.querySelector('#waitlistPatientNote').value.trim()
+      const specialNote = modal.querySelector('#waitlistPatientSpecialNote').value.trim()
+      newPatient = { id:uid(), name, phones:[modal.querySelector('#waitlistPatientPhone1').value.trim(), modal.querySelector('#waitlistPatientPhone2').value.trim()].filter(Boolean),
+        doctors:[modal.querySelector('#waitlistDoctor').value].filter(Boolean), birthDate, appointmentDate, appointmentAt:appointmentDate ? `${appointmentDate}T${appointmentTime}:00` : null,
+        doctorComment:'', specialNote, specialNoteUpdatedAt:specialNote ? now : null, specialNoteUpdatedBy:specialNote ? currentUser.name : '', status:'🆕 Новый', adminNote:note, urgent:false, createdAt:now, updatedAt:now, updatedBy:currentUser.name, externalId:null,
+        history:[createHistoryEntry('system', 'Создана карточка пациента через лист ожидания')] }
+      if (note) newPatient.history.unshift(createHistoryEntry('admin_comment', note))
+      if (specialNote) newPatient.history.unshift(createHistoryEntry('special_note', `Добавлено особое примечание: «${specialNote}».`, { actionIcon:'!', oldValue:'', newValue:specialNote }))
+      selectedPatientId = newPatient.id
+    }
+    if (!selectedPatientId) return alert('Выберите пациента или создайте нового')
     const treatment = modal.querySelector('#waitlistTreatment').value
     const customTreatment = modal.querySelector('#waitlistCustomTreatment').value.trim()
     if (treatment === 'Другое' && !customTreatment) return alert('Укажите тип лечения')
@@ -2513,12 +2542,21 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     if (!Number.isFinite(durationMinutes) || durationMinutes < 5) return alert('Укажите корректную продолжительность')
     const duplicate = activeWaitlistEntries().find(item => item.patientId === selectedPatientId && item.id !== existing?.id)
     if (duplicate) return alert('Этот пациент уже находится в листе ожидания')
+    if (newPatient) {
+      state.patients.push(newPatient)
+      if (newPatient.appointmentDate) {
+        const deadline = appointmentConfirmationDeadline(newPatient.appointmentDate)
+        const appointmentTime = newPatient.appointmentAt.slice(11, 16)
+        const confirmationTask = createActionTask(newPatient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(newPatient.appointmentDate)} в ${appointmentTime}` }, newPatient.createdAt)
+        confirmationTask.confirmationAppointmentDate = newPatient.appointmentDate
+      }
+    }
     Object.assign(entry, { patientId:selectedPatientId, doctor:modal.querySelector('#waitlistDoctor').value, treatment, customTreatment, durationMinutes,
       preferences:[...modal.querySelectorAll('[name="waitlistPreference"]:checked')].map(input => input.value), preferenceText:modal.querySelector('#waitlistPreferenceText').value.trim(), comment:modal.querySelector('#waitlistComment').value.trim(),
       priority:modal.querySelector('#waitlistPriority').value, administrator:modal.querySelector('#waitlistAdministrator').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
-    const selectedPatient = state.patients.find(item => item.id === selectedPatientId)
+    const selectedPatient = newPatient || state.patients.find(item => item.id === selectedPatientId)
     if (!selectedPatient?.appointmentDate) ensureWaitlistTask(existing || entry)
     saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
     updateWaitlistNavCount()
