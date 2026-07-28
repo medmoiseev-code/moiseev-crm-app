@@ -2596,6 +2596,24 @@ function ensureWaitlistTask(entry) {
   return task
 }
 
+function movePatientToWaitlist(patient, sourceTask, dueDate, dueTime, comment, createdAt) {
+  let entry = activeWaitlistEntries().find(item => item.patientId === patient.id)
+  if (!entry) {
+    entry = {
+      id:uid(), patientId:patient.id, doctor:patient.doctors?.[0] || '', treatment:'Другое',
+      customTreatment:cleanTaskLabel(sourceTask.title), durationMinutes:60, preferences:[], preferenceText:'',
+      comment:comment || sourceTask.note || sourceTask.comment || '', priority:'medium', administrator:sourceTask.assignee || currentUser.name,
+      status:'active', createdAt, createdBy:currentUser.name,
+    }
+    state.waitlist ||= []
+    state.waitlist.push(entry)
+  }
+  Object.assign(entry, { status:'active', updatedAt:createdAt, updatedBy:currentUser.name })
+  const waitlistTask = ensureWaitlistTask(entry)
+  Object.assign(waitlistTask, { dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:entry.comment, note:entry.comment, updatedAt:createdAt, updatedBy:currentUser.name })
+  return waitlistTask
+}
+
 function createWorkflowTask(patient, spec, createdAt = new Date().toISOString()) {
   if (!patient || !spec?.type || !spec?.dueDate) throw new Error('Для следующего действия не определены тип или дата задачи')
   const dueAt = spec.dueAt || `${spec.dueDate}T${spec.dueTime || '10:00'}:00`
@@ -2821,7 +2839,7 @@ function openReminderResultModal(task, options = {}) {
     modal.querySelector('#reminderNextDateTitle').textContent = radio.value === 'appointment' ? 'Дата и время приёма' : 'Когда создать следующую задачу?'
     const preview = modal.querySelector('#reminderNextActionPreview')
     preview.classList.remove('hidden')
-    preview.querySelector('p').textContent = radio.value === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : needsDate ? 'Будет создана новая задача напоминания' : 'Будет создано следующее действие, если других активных задач нет'
+    preview.querySelector('p').textContent = radio.value === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : radio.value === 'postponed' ? 'Пациент будет добавлен в лист ожидания и получит задачу: ⏳ Лист ожидания' : needsDate ? 'Будет создана новая задача напоминания' : 'Будет создано следующее действие, если других активных задач нет'
     modal.querySelector('#reminderResultError').textContent = ''
     saveButton.disabled = false
   })
@@ -2846,8 +2864,10 @@ function openReminderResultModal(task, options = {}) {
       if (!dueDate || !dueTime) return
       completeTaskRecord(task, now, result === 'repeat' ? 'Напомнить ещё раз' : 'Отложили', comment)
       const inheritedComment = [task.note || task.comment || '', comment].filter(Boolean).join(' ')
-      const nextTask = createActionTask(patient, { type:'reminder', title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient' }, now)
-      nextTask.reminderMethod = task.reminderMethod || (task.reminderTarget === 'doctor' ? 'doctor' : 'call')
+      const nextTask = result === 'postponed'
+        ? movePatientToWaitlist(patient, task, dueDate, dueTime, inheritedComment, now)
+        : createActionTask(patient, { type:'reminder', title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient' }, now)
+      if (result === 'repeat') nextTask.reminderMethod = task.reminderMethod || (task.reminderTarget === 'doctor' ? 'doctor' : 'call')
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', `Напоминание перенесено на ${formatDate(dueDate)} ${dueTime}.`, { actionIcon:'🔁', taskType:'reminder' }))
     } else {
@@ -2860,10 +2880,10 @@ function openReminderResultModal(task, options = {}) {
     if (!activePatientTasksExcept(patient.id, task.id).length) throw new Error('Результат напоминания не определил следующее действие')
     patient.updatedAt = now
     patient.updatedBy = currentUser.name
-    saveState(result === 'repeat' || result === 'postponed' ? `Перенесено напоминание: ${patient.name}` : `Выполнено напоминание: ${patient.name}`)
+    saveState(result === 'postponed' ? `Пациент добавлен в лист ожидания: ${patient.name}` : result === 'repeat' ? `Перенесено напоминание: ${patient.name}` : `Выполнено напоминание: ${patient.name}`)
     modal.remove()
     finishCallResult(options)
-    showToast(result === 'repeat' || result === 'postponed' ? 'Создано новое напоминание.' : 'Напоминание выполнено.')
+    showToast(result === 'postponed' ? 'Пациент добавлен в лист ожидания.' : result === 'repeat' ? 'Создано новое напоминание.' : 'Напоминание выполнено.')
   })
 }
 
