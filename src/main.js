@@ -65,14 +65,16 @@ const REFUSAL_REASONS = [
 ]
 
 const DOCTORS = ['Моисеев Г.А.', 'Климов Ф.С.']
-const STORAGE_KEY = 'moiseev_admin_crm_v06'
-const SNAPSHOT_KEY = 'moiseev_admin_crm_snapshots_v04'
-const SESSION_KEY = 'moiseev_admin_crm_user'
-const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
-const SIDEBAR_SETTINGS_KEY = 'moiseev_admin_crm_sidebar_v01'
-const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
-const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
-const PATIENT_FILTERS_KEY = 'moiseev_admin_crm_patient_filters_v01'
+const QA_MODE = new URLSearchParams(location.search).get('qa') === '1'
+const storageKey = key => QA_MODE ? `${key}_qa` : key
+const STORAGE_KEY = storageKey('moiseev_admin_crm_v06')
+const SNAPSHOT_KEY = storageKey('moiseev_admin_crm_snapshots_v04')
+const SESSION_KEY = storageKey('moiseev_admin_crm_user')
+const TABLE_SETTINGS_KEY = storageKey('moiseev_admin_crm_table_v01')
+const SIDEBAR_SETTINGS_KEY = storageKey('moiseev_admin_crm_sidebar_v01')
+const TASK_FILTERS_KEY = storageKey('moiseev_admin_crm_task_filters_v01')
+const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
+const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
   { key: 'name', width: 255 }, { key: 'doctors', width: 165 }, { key: 'appointmentDate', width: 140 },
   { key: 'status', width: 200 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
@@ -555,6 +557,7 @@ function saveState(action = 'Изменение данных') {
 }
 
 function getCurrentUser() {
+  if (QA_MODE) return USERS.find(user => user.role === 'manager')
   const id = sessionStorage.getItem(SESSION_KEY)
   return USERS.find(user => user.id === id) || null
 }
@@ -643,7 +646,7 @@ function renderShell() {
           ${currentUser.role === 'manager' ? navButton('analytics', '↗', 'Отчётность') : ''}
           ${navButton('settings', '⚙', 'Настройки')}
         </nav>
-        <span class="demo-version-badge">Демонстрационная версия</span>
+        <span class="demo-version-badge">${QA_MODE ? 'QA · безопасные тестовые данные' : 'Демонстрационная версия'}</span>
         <div class="top-actions">
           <button class="btn" id="undoBtn" title="Вернуть состояние до последнего сохранения">↶ Отменить</button>
           <button class="btn" id="backupBtn">Скачать бэкап</button>
