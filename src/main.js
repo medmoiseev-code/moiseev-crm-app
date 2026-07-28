@@ -2720,19 +2720,23 @@ function taskExecutionKind(task) {
   const source = `${task?.type || ''} ${cleanTaskLabel(task?.title || '')}`.toLowerCase()
   if (['call','decision'].includes(task?.type) || /позвон|звонок|уточнить решение/.test(source)) return 'call'
   if (task?.type === 'write' || /сообщени|написать|whatsapp|telegram/.test(source)) return 'message'
+  if (task?.type === 'appointment') return 'appointment'
+  if (task?.type === 'invite_checkup') return 'checkup'
+  if (task?.type === 'documents') return 'documents'
+  if (task?.type === 'waitlist') return 'waitlist'
   if (task?.type === 'request_image' || /снимок|рентген/.test(source)) return 'image'
-  if (['postop_control','implant_check'].includes(task?.type) || /контрол/.test(source)) return 'control'
+  if (task?.type === 'postop_control') return 'postop_control'
+  if (task?.type === 'implant_check') return 'implant_check'
+  if (/контрол/.test(source)) return 'control'
   return 'generic'
 }
 
 function taskExecutionButton(task) {
-  if (task?.type === 'reminder') {
-    if (task.reminderTarget === 'doctor') return '👨‍⚕️ Выполнить'
-    return task.reminderMethod === 'write' ? '<span class="telegram-task-icon" aria-hidden="true">➤</span> Выполнить' : '📞 Выполнить'
-  }
+  if (task?.type === 'reminder') return task.reminderTarget === 'doctor' ? '👨‍⚕️ Указать результат' : task.reminderMethod === 'write' ? '<span class="telegram-task-icon" aria-hidden="true">➤</span> Указать результат' : '🔔 Указать результат'
   return ({
-    confirmation:'✅ Подтвердить', call:'📞 Указать результат', message:'✉ Выполнить',
-    reminder:'🔔 Выполнить', image:'🩻 Получить снимок', control:'🦷 Провести контроль', generic:'✔ Выполнить',
+    confirmation:'✅ Указать результат', call:'📞 Указать результат', message:'✉ Указать результат', appointment:'📅 Указать результат',
+    checkup:'🦷 Указать результат', documents:'📄 Указать результат', waitlist:'⏳ Указать результат',
+    reminder:'🔔 Указать результат', image:'🩻 Указать результат', control:'🦷 Указать результат', postop_control:'🪡 Указать результат', implant_check:'🦷 Указать результат', generic:'✔ Указать результат',
   })[taskExecutionKind(task)]
 }
 
@@ -2806,81 +2810,77 @@ function openReminderResultModal(task, options = {}) {
   }
 }
 
-function completeSimpleTask(task, patient, result, comment, options) {
-  const now = new Date().toISOString()
-  completeTaskRecord(task, now, result, comment)
-  patient.history ||= []
-  patient.history.unshift(createHistoryEntry('task_completed', `${cleanTaskLabel(task.title)}.`, { taskType:task.type }))
-  patient.updatedAt = now
-  patient.updatedBy = currentUser.name
-  if (comment) patient.adminNote = comment
-  saveState(`Выполнена задача: ${task.title}`)
-  finishCallResult(options)
-  showToast('Задача отмечена выполненной.')
-}
-
-function rescheduleSimpleTask(task, patient, dueDate, dueTime, comment, options) {
-  const now = new Date().toISOString()
-  task.dueDate = dueDate
-  task.dueAt = `${dueDate}T${dueTime}:00`
-  task.updatedAt = now
-  task.updatedBy = currentUser.name
-  task.history ||= []
-  task.history.push({ id:uid(), at:now, author:currentUser.name, action:'rescheduled', text:[`Перенесена на ${formatDate(dueDate)}, ${dueTime}`, comment].filter(Boolean).join('. ') })
-  patient.history ||= []
-  patient.history.unshift(createHistoryEntry('task', `${cleanTaskLabel(task.title)} перенесена на ${formatDate(dueDate)}, ${dueTime}.`, { taskType:task.type }))
-  patient.updatedAt = now
-  patient.updatedBy = currentUser.name
-  if (comment) patient.adminNote = comment
-  saveState(`Перенесена задача: ${task.title}`)
-  finishCallResult(options)
-  showToast(`Задача перенесена на ${formatDate(dueDate)}, ${dueTime}.`)
-}
-
 function openSimpleTaskExecution(task, kind, options = {}) {
   const patient = state.patients.find(item => item.id === task.patientId)
   if (!patient) return
-  const config = {
-    message:{ title:'✉ Сообщение пациенту', question:'Сообщение отправлено?', yes:'Да, отправлено', no:'Нет', result:'Сообщение отправлено' },
-    image:{ title:'🩻 Получение снимка', question:'Снимок получен?', yes:'Да, получен', no:'Нет', result:'Снимок получен' },
-    control:{ title:'🦷 Послеоперационный контроль', question:'Контроль выполнен?', yes:'Да, выполнен', no:'Нет', result:'Контроль выполнен' },
-    generic:{ title:'✔ Выполнение задачи', question:'Выполнить задачу?', yes:'Да', no:'Нет', result:'Задача выполнена' },
-  }[kind]
+  const configs = {
+    message:{ title:'✉ Результат сообщения', results:[['sent','Сообщение доставлено',false],['no_reply','Нет ответа',true],['later','Попросил написать позже',true],['refused','Отказался от дальнейшей переписки',false]] },
+    appointment:{ title:'📅 Результат записи на приём', results:[['booked','Записали на приём',false,'appointment'],['no_contact','Не удалось связаться',true],['later','Попросил связаться позже',true],['refused','Отказался от записи',false]] },
+    checkup:{ title:'🦷 Результат приглашения на профосмотр', results:[['booked','Записали на профосмотр',false,'appointment'],['no_contact','Не дозвонились',true],['later','Попросил напомнить позже',true],['refused','Отказался от профосмотра',false]] },
+    documents:{ title:'📄 Результат отправки документов', results:[['sent','Документы отправлены',false],['clarify','Нужно уточнить данные',true],['later','Попросил отправить позже',true],['refused','Отказался получать документы',false]] },
+    image:{ title:'🩻 Результат запроса снимка', results:[['received','Снимок получен',false],['requested_again','Запросили повторно',true],['later','Пациент пришлёт позже',true],['refused','Пациент отказался присылать снимок',false]] },
+    control:{ title:'🦷 Результат контроля', results:[['completed','Контроль проведён',false],['repeat','Нужен повторный контроль',true],['no_show','Пациент не явился',true],['referred','Передано врачу',false]] },
+    postop_control:{ title:'🪡 Результат контроля после операции', results:[['normal','Состояние в норме',false],['repeat','Нужен повторный контроль',true],['no_show','Пациент не явился',true],['doctor','Есть жалобы — передано врачу',false]] },
+    implant_check:{ title:'🦷 Результат осмотра импланта', results:[['completed','Осмотр проведён',false],['repeat','Нужен повторный осмотр',true],['no_show','Пациент не явился',true],['intervention','Требуется вмешательство врача',false]] },
+    waitlist:{ title:'⏳ Результат работы с листом ожидания', results:[['booked','Записали на приём',false,'appointment'],['waiting','Остаётся в листе ожидания',true],['no_contact','Не удалось связаться',true],['refused','Отказался от ожидания',false]] },
+    generic:{ title:'✔ Результат задачи', results:[['completed','Работа завершена',false],['continue','Требуется продолжение',true],['cancelled','Задача больше не актуальна',false]] },
+  }
+  const config = configs[kind] || configs.generic
   document.querySelector('#simpleTaskExecutionModal')?.remove()
-  const retry = kind !== 'generic'
-  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="simpleTaskExecutionModal"><div class="dialog simple-task-execution-dialog" role="dialog" aria-modal="true" aria-labelledby="simpleTaskExecutionTitle"><div class="dialog-head"><div><h2 id="simpleTaskExecutionTitle">${config.title}</h2><p>${esc(patient.name)} · ${esc(cleanTaskLabel(task.title))}</p></div><button class="icon-btn" data-close-simple-task>×</button></div><h3 class="call-result-step">${config.question}</h3><div class="call-result-options"><label><input type="radio" name="simpleTaskResult" value="yes"> <span>${config.yes}</span></label><label><input type="radio" name="simpleTaskResult" value="no"> <span>${config.no}</span></label></div>${retry ? `<section class="hidden simple-task-retry" id="simpleTaskRetry"><h3 class="call-result-step">${kind === 'image' ? 'Когда повторить запрос?' : kind === 'control' ? 'Новая дата контроля' : 'Что сделать дальше?'}</h3>${kind === 'message' ? '<div class="call-result-options compact-options"><label><input type="radio" name="simpleRetryMode" value="reschedule" checked> <span>Повторить позже</span></label><label><input type="radio" name="simpleRetryMode" value="new"> <span>Создать новую задачу</span></label></div>' : ''}<div class="custom-datetime-grid">${manualDateMarkup('simpleRetry', 'Дата', localDatePlus(1))}${manualTimeMarkup('simpleRetry', 'Время', '10:00')}</div></section>` : ''}<label class="field call-result-comment"><span>Примечание</span><textarea id="simpleTaskComment" placeholder="Необязательно"></textarea></label><div class="dialog-actions"><button class="btn" data-close-simple-task>Отмена</button><button class="btn primary" id="saveSimpleTaskResult" disabled>Сохранить</button></div></div></div>`)
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="simpleTaskExecutionModal"><div class="dialog simple-task-execution-dialog" role="dialog" aria-modal="true" aria-labelledby="simpleTaskExecutionTitle"><div class="dialog-head"><div><h2 id="simpleTaskExecutionTitle">${config.title}</h2><p>${esc(patient.name)} · ${esc(cleanTaskLabel(task.title))}</p></div><button class="icon-btn" data-close-simple-task>×</button></div><h3 class="call-result-step">Выберите результат</h3><div class="call-result-options">${config.results.map(([value,label]) => `<label><input type="radio" name="simpleTaskResult" value="${value}"> <span>${label}</span></label>`).join('')}</div><section class="hidden simple-task-retry" id="simpleTaskRetry"><h3 class="call-result-step">Когда продолжить работу?</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleRetry', 'Дата новой задачи', localDatePlus(1))}${manualTimeMarkup('simpleRetry', 'Время', '10:00')}</div></section><section class="hidden simple-task-appointment" id="simpleTaskAppointment"><h3 class="call-result-step">Дата и время приёма</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleAppointment', 'Дата приёма', localDatePlus(1))}${manualTimeMarkup('simpleAppointment', 'Время', '10:00')}</div></section><label class="field call-result-comment"><span>Примечание</span><textarea id="simpleTaskComment" placeholder="Необязательно"></textarea></label><div class="dialog-actions"><button class="btn" data-close-simple-task>Отмена</button><button class="btn primary" id="saveSimpleTaskResult" disabled>Сохранить результат</button></div></div></div>`)
   const modal = document.querySelector('#simpleTaskExecutionModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-simple-task]').forEach(button => button.onclick = close)
   closeOnBackdropClick(modal, close)
-  if (retry) { setupManualDate(modal, 'simpleRetry'); setupManualTime(modal, 'simpleRetry') }
+  setupManualDate(modal, 'simpleRetry'); setupManualTime(modal, 'simpleRetry')
+  setupManualDate(modal, 'simpleAppointment'); setupManualTime(modal, 'simpleAppointment')
   const saveButton = modal.querySelector('#saveSimpleTaskResult')
   modal.querySelectorAll('[name="simpleTaskResult"]').forEach(radio => radio.onchange = () => {
-    modal.querySelector('#simpleTaskRetry')?.classList.toggle('hidden', radio.value !== 'no')
+    const selected = config.results.find(([value]) => value === radio.value)
+    modal.querySelector('#simpleTaskRetry').classList.toggle('hidden', !selected?.[2])
+    modal.querySelector('#simpleTaskAppointment').classList.toggle('hidden', selected?.[3] !== 'appointment')
     saveButton.disabled = false
   })
   saveButton.onclick = () => {
-    const answer = modal.querySelector('[name="simpleTaskResult"]:checked')?.value
+    const value = modal.querySelector('[name="simpleTaskResult"]:checked')?.value
+    const selected = config.results.find(([resultValue]) => resultValue === value)
     const comment = modal.querySelector('#simpleTaskComment').value.trim()
-    if (answer === 'yes') { modal.remove(); return completeSimpleTask(task, patient, config.result, comment, options) }
-    if (kind === 'generic') return modal.remove()
-    const dueDate = readManualDate(modal, 'simpleRetry')
-    const dueTime = readManualTime(modal, 'simpleRetry')
-    if (!dueDate || !dueTime) return
-    const createNew = kind === 'image' || (kind === 'message' && modal.querySelector('[name="simpleRetryMode"]:checked')?.value === 'new')
-    modal.remove()
-    if (createNew) {
-      const now = new Date().toISOString()
-      completeTaskRecord(task, now, `${config.question} Нет`, comment)
-      createActionTask(patient, { type:task.type, title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment }, now)
+    if (!selected) return
+    const now = new Date().toISOString()
+    if (selected[2]) {
+      const dueDate = readManualDate(modal, 'simpleRetry')
+      const dueTime = readManualTime(modal, 'simpleRetry')
+      if (!dueDate || !dueTime) return
+      completeTaskRecord(task, now, selected[1], comment)
+      createActionTask(patient, { type:task.type, title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' ') }, now)
       patient.history ||= []
-      patient.history.unshift(createHistoryEntry('task', `${cleanTaskLabel(task.title)}: создана повторная задача на ${formatDate(dueDate)}, ${dueTime}.`, { taskType:task.type }))
-      patient.updatedAt = now; patient.updatedBy = currentUser.name
-      saveState(`Создана повторная задача: ${task.title}`)
-      finishCallResult(options)
-      return showToast('Создана повторная задача.')
+      patient.history.unshift(createHistoryEntry('task', `${selected[1]}. Создана новая задача на ${formatDate(dueDate)}, ${dueTime}.`, { actionIcon:taskIndicatorIcon(task), taskType:task.type }))
+    } else {
+      if (selected[3] === 'appointment') {
+        const appointmentDate = readManualDate(modal, 'simpleAppointment')
+        const appointmentTime = readManualTime(modal, 'simpleAppointment')
+        if (!appointmentDate || !appointmentTime) return
+        patient.appointmentDate = appointmentDate
+        patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`
+        patient.status = '📅 Записан на приём'
+        const deadline = appointmentConfirmationDeadline(appointmentDate)
+        createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}` }, now)
+      }
+      completeTaskRecord(task, now, selected[1], comment)
+      patient.history ||= []
+      patient.history.unshift(createHistoryEntry('task_completed', `${selected[1]}.`, { actionIcon:taskIndicatorIcon(task), taskType:task.type }))
+      if (kind === 'waitlist' && ['booked','refused'].includes(value)) {
+        const waitlistEntry = activeWaitlistEntries().find(entry => entry.patientId === patient.id)
+        if (waitlistEntry) { waitlistEntry.status = 'removed'; waitlistEntry.removedAt = now; waitlistEntry.removedBy = currentUser.name }
+        if (value === 'refused') patient.status = '❌ Отказ'
+      }
     }
-    rescheduleSimpleTask(task, patient, dueDate, dueTime, comment, options)
+    patient.updatedAt = now; patient.updatedBy = currentUser.name
+    if (comment) patient.adminNote = comment
+    saveState(`Сохранён результат задачи: ${task.title}`)
+    modal.remove()
+    finishCallResult(options)
+    showToast(selected[2] ? 'Текущая задача закрыта, новая задача создана.' : 'Результат задачи сохранён.')
   }
 }
 
@@ -3022,7 +3022,7 @@ function openCallResultModal(taskId, options = {}) {
       <div class="outcome-extra hidden" id="reminderOutcome"><div class="custom-datetime-grid">${manualDateMarkup('outcomeReminder', 'Дата напоминания', '')}${manualTimeMarkup('outcomeReminder', 'Время', '10:00')}</div><label class="field"><span>Кому</span><select id="outcomeReminderTarget"><option value="patient">Пациенту</option><option value="doctor">Доктору</option></select></label><label class="field"><span>Текст напоминания</span><textarea id="outcomeReminderText"></textarea></label></div>
       <div class="outcome-extra hidden" id="refusalOutcome"><label class="field"><span>Причина отказа</span><select id="outcomeRefusalReason"><option value="">Выберите причину</option>${REFUSAL_REASONS.map(item => `<option value="${item.value}">${item.option}</option>`).join('')}</select></label><label class="field hidden" id="outcomeOtherRefusalField"><span>Описание причины</span><textarea id="outcomeOtherRefusal"></textarea></label></div>
       <div class="outcome-extra hidden" id="doNotCallOutcome"><label class="field"><span>Причина</span><input id="outcomeDoNotCallReason"></label></div>
-      <div class="outcome-extra hidden" id="otherOutcome"><p class="settings-note">Для варианта «Другое» примечание обязательно.</p><label class="field"><span>Что сделать с задачей</span><select id="outcomeOtherAction"><option value="finish">Завершить задачу</option><option value="repeat">Назначить повторную связь</option></select></label></div>
+      <div class="outcome-extra hidden" id="otherOutcome"><p class="settings-note">Для варианта «Другое» примечание обязательно.</p><label class="field"><span>Что произошло дальше</span><select id="outcomeOtherAction"><option value="finish">Процесс завершён</option><option value="repeat">Назначить повторную связь</option></select></label></div>
     </section>
     <label class="field call-result-comment"><span>Примечание</span><textarea id="callResultComment" placeholder="Например: пациент попросил позвонить после 15:00"></textarea></label>
     <div class="dialog-actions"><button class="btn" data-close-result>Отмена</button><button class="btn primary" id="saveCallResult" disabled>Сохранить результат</button></div>
@@ -3176,7 +3176,7 @@ function openCallResultModal(taskId, options = {}) {
 
 function openTaskCompletionConfirmation(onConfirm) {
   document.querySelector('#taskCompletionConfirm')?.remove()
-  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="taskCompletionConfirm"><div class="dialog confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="taskConfirmTitle"><div class="dialog-head"><div><h2 id="taskConfirmTitle">Отметить задачу выполненной?</h2><p>После подтверждения задача перейдёт в список выполненных.</p></div></div><div class="dialog-actions"><button class="btn" id="cancelTaskCompletion">Отмена</button><button class="btn danger-confirm" id="confirmTaskCompletion">Да, задача выполнена</button></div></div></div>`)
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="taskCompletionConfirm"><div class="dialog confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="taskConfirmTitle"><div class="dialog-head"><div><h2 id="taskConfirmTitle">Сохранить выбранный результат?</h2><p>Результат будет записан в историю задачи.</p></div></div><div class="dialog-actions"><button class="btn" id="cancelTaskCompletion">Отмена</button><button class="btn danger-confirm" id="confirmTaskCompletion">Подтвердить результат</button></div></div></div>`)
   const confirmation = document.querySelector('#taskCompletionConfirm')
   const cancel = confirmation.querySelector('#cancelTaskCompletion')
   cancel.onclick = () => confirmation.remove()
@@ -3254,11 +3254,12 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
       completePatientTasks(patient.id, item => isCallTaskType(item.type), attemptedAt, 'Не звонить')
     }
   } else {
-    task.status = 'active'
-    task.completedAt = null
-    task.completedBy = null
-    task.dueDate = followup.dueDate
-    task.dueAt = followup.dueAt || null
+    task.status = 'completed'
+    task.completedAt = attemptedAt
+    task.completedBy = currentUser.name
+    const nextTask = createActionTask(patient, { type:task.type, title:task.title, dueDate:followup.dueDate, dueAt:followup.dueAt || null, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' ') }, attemptedAt)
+    nextTask.reminderTarget = task.reminderTarget || null
+    nextTask.reminderMethod = task.reminderMethod || null
   }
   patient.history.unshift({
     id:uid(), patientId:patient.id, taskId:task.id, timestamp:attemptedAt, createdAt:attemptedAt,
@@ -3273,7 +3274,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   task.history.push({ id:uid(), at:attemptedAt, author:currentUser.name, action:task.status === 'completed' ? 'completed' : 'rescheduled', text:[resultLabel, followup?.description || '', comment].filter(Boolean).join('. ') })
   patient.updatedAt = attemptedAt
   patient.updatedBy = currentUser.name
-  saveState(result === 'completed' ? `Выполнена задача: ${task.title}` : `Перенесена задача: ${task.title}`)
+  saveState(result === 'completed' ? `Сохранён результат задачи: ${task.title}` : `Сохранён результат и создана новая задача: ${task.title}`)
   if (result === 'completed' && outcome?.status === 'appointment') offerWaitlistRemoval(patient.id)
 }
 
