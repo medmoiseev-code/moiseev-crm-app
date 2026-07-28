@@ -10,6 +10,9 @@ dist/
 # Patient and medical data bundled with local builds
 src/imported-data.js
 /ОТКРЫТЬ CRM.html
+patients_moiseev_import*.json
+*patient*import*.json
+*пациент*импорт*.json
 
 # CRM backups, exports, and data extracts
 *crm*backup*.json

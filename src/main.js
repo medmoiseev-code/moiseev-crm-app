@@ -34,6 +34,14 @@ const TASK_TYPES = [
   { value: 'other', label: 'Другое' },
 ]
 
+const WAITLIST_TREATMENTS = ['Консультация','Имплантация','Удаление','Пластика','Синус-лифтинг','Ортопедия','Гигиена','Другое']
+const WAITLIST_DURATIONS = [30, 60, 90, 120, 180]
+const WAITLIST_PREFERENCES = [
+  ['any_day','Любой день'], ['morning','Только утро'], ['day','Только день'],
+  ['evening','Только вечер'], ['weekends','Только выходные'], ['asap','Как можно раньше'],
+]
+const WAITLIST_PRIORITIES = [['high','Высокий'],['medium','Средний'],['low','Низкий']]
+
 const PATIENT_ACTIONS = [
   { value:'call', label:'📞 Позвонить' }, { value:'reminder', label:'🔔 Напомнить' },
   { value:'thinking', label:'🤔 Пациент думает' }, { value:'appointment', label:'📅 Записать на приём' },
@@ -65,9 +73,9 @@ const TASK_FILTERS_KEY = 'moiseev_admin_crm_task_filters_v01'
 const PATIENT_SORT_KEY = 'moiseev_admin_crm_patient_sort_v01'
 const PATIENT_FILTERS_KEY = 'moiseev_admin_crm_patient_filters_v01'
 const PATIENT_COLUMNS = [
-  { key: 'name', width: 220 }, { key: 'createdAt', width: 125 }, { key: 'doctors', width: 150 }, { key: 'appointmentDate', width: 130 },
-  { key: 'status', width: 190 }, { key: 'addTask', width: 190 }, { key: 'actions', width: 82 },
-  { key: 'adminNote', width: 285 }, { key: 'history', width: 470 },
+  { key: 'name', width: 255 }, { key: 'doctors', width: 165 }, { key: 'appointmentDate', width: 140 },
+  { key: 'status', width: 200 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
+  { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
 
 const app = document.querySelector('#app')
@@ -86,6 +94,7 @@ let shiftTimer = null
 let worktimeLoaded = false
 let userSettings = currentUser ? loadUserSettings(currentUser.id) : defaultUserSettings()
 let settingsTab = 'appearance'
+let waitlistFilters = { search:'', doctor:'', treatment:'', duration:'', priority:'' }
 
 function cloneData(value) {
   return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
@@ -104,7 +113,7 @@ function loadTaskFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(TASK_FILTERS_KEY) || '{}')
     const allowed = {
-      deadline:['today','tomorrow','upcoming','overdue','all'],
+      deadline:['today','tomorrow','upcoming','overdue','all','waitlist'],
       type:['all','call','reminder','decision','confirmation','message','image','control','checkup','other'],
       state:['active','completed','all'],
     }
@@ -151,6 +160,7 @@ function loadState() {
       const loaded = {
         ...saved,
         tasks: Array.isArray(saved.tasks) ? saved.tasks : [],
+        waitlist: Array.isArray(saved.waitlist) ? saved.waitlist : [],
         audit: Array.isArray(saved.audit) ? saved.audit : [],
       }
       loaded.patients.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
@@ -196,6 +206,7 @@ function migrateLegacyPatientDates(data) {
 
 function normalizedInitialState() {
   const initialState = createInitialState()
+  initialState.waitlist = Array.isArray(initialState.waitlist) ? initialState.waitlist : []
   initialState.patients?.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
   initialState.tasks?.forEach(task => { if (task.dueDate && !task.dueAt) task.dueAt = `${task.dueDate}T10:00:00` })
   return initialState
@@ -319,6 +330,35 @@ function compactTaskLabel(task) {
   if (/^[^\p{L}\p{N}]/u.test(title)) return title
   const icon = fallback.match(/^\S+/)?.[0] || ''
   return `${icon} ${title}`.trim()
+}
+
+function taskIndicatorIcon(task) {
+  if (task?.type === 'reminder' && task.reminderTarget === 'doctor') return '👨‍⚕️'
+  const icons = {
+    call:'📞', write:'💬', message:'💬', reminder:'🔔', appointment:'📅', confirmation:'📅',
+    invite_checkup:'🦷', decision:'⏳', documents:'📄', postop_control:'🪡',
+    implant_check:'🦷', request_image:'📷', other:'•',
+  }
+  if (icons[task?.type]) return icons[task.type]
+  if (/доктор/iu.test(`${task?.title || ''} ${task?.comment || ''}`)) return '👨‍⚕️'
+  if (/подтверд|запис/iu.test(task?.title || '')) return '📅'
+  return compactTaskLabel(task).match(/^\S+/u)?.[0] || '•'
+}
+
+function tableTaskDue(task) {
+  if (!task?.dueDate) return 'Без срока'
+  const time = task.dueAt?.slice(11, 16)
+  const day = task.dueDate === todayISO() ? 'Сегодня' : task.dueDate === localDatePlus(1) ? 'Завтра' : formatDate(task.dueDate)
+  return `${day}${time ? ` ${time}` : ''}`
+}
+
+function patientTaskIndicatorsMarkup(tasks) {
+  if (tasks.length < 2) return ''
+  const additionalTasks = tasks.slice(1)
+  const visibleTasks = additionalTasks.slice(0, 3)
+  const hiddenCount = additionalTasks.length - visibleTasks.length
+  const tooltip = tasks.map(task => `<span class="task-indicator-tooltip-item"><b>${taskIndicatorIcon(task)} ${esc(cleanTaskLabel(task.title || taskTypeDisplay(task)))}</b><time>${esc(tableTaskDue(task))}</time></span>`).join('')
+  return `<span class="task-indicator-row" aria-label="Ещё ${additionalTasks.length} ${taskWord(additionalTasks.length)}">${visibleTasks.map(task => `<i aria-hidden="true">${taskIndicatorIcon(task)}</i>`).join('')}${hiddenCount ? `<b>+${hiddenCount}</b>` : ''}<span class="task-indicator-tooltip" role="tooltip">${tooltip}</span></span>`
 }
 
 function patientStageTaskMarkup(patient) {
@@ -554,7 +594,7 @@ function renderLogin() {
     <main class="login-screen">
       <section class="login-card">
         <div class="logo-mark">M</div>
-        <h1>Moiseev Admin</h1>
+        <h1>StomX CRM</h1>
         <p>Выберите сотрудника. Пароли подключим позже.</p>
         <div class="user-grid">
           ${USERS.map(user => `
@@ -590,6 +630,7 @@ function renderShell() {
           ${currentUser.role === 'manager' ? navButton('analytics', '↗', 'Отчётность') : ''}
           ${navButton('settings', '⚙', 'Настройки')}
         </nav>
+        <span class="demo-version-badge">Демонстрационная версия</span>
         <div class="top-actions">
           <button class="btn" id="undoBtn" title="Вернуть состояние до последнего сохранения">↶ Отменить</button>
           <button class="btn" id="backupBtn">Скачать бэкап</button>
@@ -626,7 +667,7 @@ function renderShell() {
 
 function userWorkBlockMarkup() {
   const shiftControls = currentUser.role === 'admin' ? shiftWidgetMarkup() : ''
-  return `<div class="user-work-block"><span class="user-work-name">${currentUser.role === 'admin' ? '🟢' : '👤'} ${esc(currentUser.name)}</span>${shiftControls}<button class="user-menu-toggle" id="userMenuToggle" aria-label="Открыть меню пользователя" aria-expanded="false">▼</button><div class="user-menu hidden" id="userMenu"><button data-user-action="switch">Сменить пользователя</button><button data-user-action="worktime">${currentUser.role === 'manager' ? 'Учёт рабочего времени' : 'Моё рабочее время'}</button><button data-user-action="logout">Выйти</button></div></div>`
+  return `<div class="user-work-block"><span class="user-work-name">${currentUser.role === 'admin' ? '🟢' : '👤'} ${esc(currentUser.name)}</span>${shiftControls}<button class="user-menu-toggle" id="userMenuToggle" aria-label="Открыть меню пользователя" aria-expanded="false">▼</button><div class="user-menu hidden" id="userMenu"><button data-user-action="switch">Сменить пользователя</button><button data-user-action="worktime">${currentUser.role === 'manager' ? 'Учёт рабочего времени' : 'Моё рабочее время'}</button><button data-user-action="reset-demo">↻ Сбросить демоданные</button><button data-user-action="logout">Выйти</button></div></div>`
 }
 
 function shiftWidgetMarkup() {
@@ -649,8 +690,32 @@ function setupUserMenu() {
   }
   menu.onclick = event => event.stopPropagation()
   menu.querySelector('[data-user-action="worktime"]').onclick = () => { activeTab = 'worktime'; renderShell() }
+  menu.querySelector('[data-user-action="reset-demo"]').onclick = openDemoResetModal
   menu.querySelector('[data-user-action="switch"]').onclick = () => exitCurrentUser()
   menu.querySelector('[data-user-action="logout"]').onclick = () => exitCurrentUser()
+}
+
+function openDemoResetModal() {
+  document.querySelector('#demoResetModal')?.remove()
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="demoResetModal"><div class="dialog demo-reset-dialog" role="alertdialog" aria-modal="true" aria-labelledby="demoResetTitle"><div class="dialog-head"><div><h2 id="demoResetTitle">Сбросить демоданные?</h2><p>Все изменения, внесённые в демонстрационной версии, будут удалены. Восстановить исходные тестовые данные?</p></div></div><div class="dialog-actions"><button class="btn" id="cancelDemoReset">Отмена</button><button class="btn danger-confirm" id="confirmDemoReset">Восстановить</button></div></div></div>`)
+  const modal = document.querySelector('#demoResetModal')
+  const close = () => modal.remove()
+  modal.querySelector('#cancelDemoReset').onclick = close
+  closeOnBackdropClick(modal, close)
+  modal.querySelector('#confirmDemoReset').onclick = () => {
+    state = normalizedInitialState()
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    localStorage.removeItem(SNAPSHOT_KEY)
+    patientFilters = { name:'', doctor:'', status:'', group:'all', taskDue:'all' }
+    activeTaskFilter = 'today'
+    taskSearchText = ''
+    taskFilters = { deadline:'today', type:'all', assignee:'all', state:'active' }
+    waitlistFilters = { search:'', doctor:'', treatment:'', duration:'', priority:'' }
+    modal.remove()
+    renderShell()
+    showToast('Исходные демоданные восстановлены.')
+  }
+  modal.querySelector('#cancelDemoReset').focus()
 }
 
 function exitCurrentUser() {
@@ -704,6 +769,18 @@ function formatTimer(seconds) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
 }
 
+function closeOnBackdropClick(modal, close) {
+  let startedOnBackdrop = false
+  modal.addEventListener('pointerdown', event => {
+    startedOnBackdrop = event.target === modal
+  })
+  modal.addEventListener('pointercancel', () => { startedOnBackdrop = false })
+  modal.addEventListener('click', event => {
+    if (startedOnBackdrop && event.target === modal) close()
+    startedOnBackdrop = false
+  })
+}
+
 function openEndShiftDialog() {
   const shift = activeShift(currentUser.id)
   if (!shift) return
@@ -715,7 +792,7 @@ function openEndShiftDialog() {
   const cancel = modal.querySelector('#cancelEndShift')
   const close = () => modal.remove()
   cancel.onclick = close
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   modal.querySelector('#confirmEndShift').onclick = () => {
     stopShiftTimer()
     const completed = endShift(currentUser.id)
@@ -749,7 +826,8 @@ function patientMatches(patient) {
 function specialNoteBadge(patient, className = '') {
   const note = String(patient?.specialNote || '').trim()
   if (!note) return ''
-  return `<span class="special-note-badge ${className}" tabindex="0" role="button" data-special-note-badge aria-label="Особое примечание: ${esc(note)}"><span aria-hidden="true">!</span><span class="special-note-tooltip" role="tooltip">${esc(note)}</span></span>`
+  const patientId = patient?.id ? ` data-special-note-patient="${esc(patient.id)}"` : ''
+  return `<span class="special-note-badge ${className}" tabindex="0" role="button" data-special-note-badge${patientId} aria-label="Редактировать особое примечание: ${esc(note)}"><span aria-hidden="true">!</span><span class="special-note-tooltip" role="tooltip">${esc(note)}</span></span>`
 }
 
 function patientMatchesFilters(patient) {
@@ -1184,7 +1262,7 @@ function initializePatientTableColumns() {
 function loadPatientSort() {
   const allowed = ['updated', 'created', 'createdAsc', 'createdDesc', 'appointment', 'appointmentAsc', 'appointmentDesc', 'nameAsc', 'nameDesc', 'historyAsc', 'historyDesc', 'taskAsc', 'taskDesc']
   const saved = localStorage.getItem(PATIENT_SORT_KEY)
-  return allowed.includes(saved) ? saved : 'updated'
+  return allowed.includes(saved) ? saved : 'createdDesc'
 }
 
 function loadPatientFilters() {
@@ -1248,17 +1326,31 @@ function patientHeaderSortButton(column, label, title = '') {
   return `<button type="button" class="table-header-control ${active ? 'active' : ''}" data-patient-sort-header="${column}" title="${esc(title || `Сортировать: ${label}`)}"><span>${label}</span><i>${patientSortIndicator(column)}</i></button>`
 }
 
+function patientNameSortMenuMarkup() {
+  const options = [
+    ['createdDesc','По дате создания — сначала новые'],
+    ['createdAsc','По дате создания — сначала старые'],
+    ['nameAsc','По ФИО — А–Я'],
+    ['nameDesc','По ФИО — Я–А'],
+  ]
+  const normalizedSort = patientSort === 'created' ? 'createdDesc' : patientSort
+  const selectedLabel = options.find(([value]) => value === normalizedSort)?.[1] || options[0][1]
+  const direction = ['createdAsc','nameAsc'].includes(normalizedSort) ? '↑' : '↓'
+  return `<div class="patient-name-sort"><button type="button" class="table-header-control active" data-patient-name-sort-toggle aria-haspopup="menu" aria-expanded="false" title="${esc(selectedLabel)}"><span>ФИО</span><i>${direction}</i></button><div class="patient-name-sort-menu hidden" role="menu">${options.map(([value,label]) => `<button type="button" role="menuitemradio" aria-checked="${normalizedSort === value}" class="${normalizedSort === value ? 'active' : ''}" data-patient-name-sort="${value}"><span>${label}</span><i>${normalizedSort === value ? '✓' : ''}</i></button>`).join('')}</div></div>`
+}
+
 function taskNavigationMarkup(activeFilter = '') {
   const today = todayISO()
   const tomorrow = localDatePlus(1)
   const activeTasks = state.tasks.filter(isTaskActive)
   const items = [
-    ['today', '🟠 Задачи сегодня', activeTasks.filter(task => task.dueDate === today).length],
-    ['tomorrow', '🟡 Задачи завтра', activeTasks.filter(task => task.dueDate === tomorrow).length],
-    ['upcoming', '🟢 Будущие задачи', activeTasks.filter(task => Boolean(task.dueDate) && task.dueDate > tomorrow).length],
-    ['overdue', '🔴 Просроченные задачи', activeTasks.filter(isTaskOverdue).length],
+    ['today', '🟠 Сегодня', activeTasks.filter(task => task.dueDate === today).length],
+    ['tomorrow', '🟡 Завтра', activeTasks.filter(task => task.dueDate === tomorrow).length],
+    ['upcoming', '🟢 Будущие', activeTasks.filter(task => Boolean(task.dueDate) && task.dueDate > tomorrow).length],
+    ['overdue', '🔴 Просроченные', activeTasks.filter(isTaskOverdue).length],
+    ['waitlist', 'Лист ожидания', activeWaitlistEntries().length],
   ]
-  return `<section class="summary-strip task-navigation" aria-label="Навигация по срокам задач">${items.map(([value, label, count]) => `<button class="summary-item task-summary-tab task-tab-${value} ${activeFilter === value ? 'active' : ''}" data-open-tasks="${value}"><span>${label} <b>(${count})</b></span></button>`).join('')}</section>`
+  return `<section class="summary-strip task-navigation" aria-label="Навигация по срокам задач">${items.map(([value, label, count]) => `<button class="summary-item task-summary-tab task-tab-${value} ${activeFilter === value ? 'active' : ''}" data-open-tasks="${value}"><span>${value === 'waitlist' ? '<i class="task-waitlist-icon" aria-hidden="true">⏳︎</i> ' : ''}${label} <b>(${count})</b></span></button>`).join('')}</section>`
 }
 
 function setupTaskNavigation(root) {
@@ -1294,8 +1386,7 @@ function renderPatients() {
       <div class="table-scroll">
         <table class="patient-table">
           <thead><tr>
-            <th>${patientHeaderSortButton('name', 'ФИО')}</th>
-            <th>${patientHeaderSortButton('createdAt', 'Дата создания')}</th>
+            <th>${patientNameSortMenuMarkup()}</th>
             <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
             <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
@@ -1305,7 +1396,7 @@ function renderPatients() {
             <th>${patientHeaderSortButton('history', 'История')}</th>
           </tr></thead>
           <tbody>
-            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="9">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
+            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="8">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1377,6 +1468,11 @@ function renderPatients() {
     button.closest('[data-action-menu]')?.classList.add('hidden')
     openQuickCommentModal(button.dataset.patientCommentAction)
   }))
+  document.querySelectorAll('[data-add-waitlist]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation()
+    button.closest('[data-action-menu]')?.classList.add('hidden')
+    openWaitlistEntryModal(button.dataset.addWaitlist)
+  }))
   document.querySelectorAll('[data-patient-task-action]').forEach(button => button.addEventListener('click', event => {
     event.preventDefault(); event.stopPropagation()
     button.closest('[data-action-menu]')?.classList.add('hidden')
@@ -1431,6 +1527,24 @@ function setupPatientHeaderControls(root) {
     createdAt:['createdDesc', 'createdAsc', 'updated'],
     appointmentDate:['appointmentAsc', 'appointmentDesc', 'updated'],
     history:['historyDesc', 'historyAsc', 'updated'],
+  }
+  const nameSortToggle = root.querySelector('[data-patient-name-sort-toggle]')
+  const nameSortMenu = root.querySelector('.patient-name-sort-menu')
+  if (nameSortToggle && nameSortMenu) {
+    ;['pointerdown','mousedown','click'].forEach(type => nameSortToggle.addEventListener(type, event => event.stopPropagation()))
+    nameSortToggle.addEventListener('click', () => {
+      const opened = nameSortMenu.classList.toggle('hidden') === false
+      nameSortToggle.setAttribute('aria-expanded', String(opened))
+      if (opened) setTimeout(() => document.addEventListener('click', () => { nameSortMenu.classList.add('hidden'); nameSortToggle.setAttribute('aria-expanded','false') }, { once:true }), 0)
+    })
+    nameSortMenu.querySelectorAll('[data-patient-name-sort]').forEach(button => {
+      ;['pointerdown','mousedown','click'].forEach(type => button.addEventListener(type, event => event.stopPropagation()))
+      button.addEventListener('click', () => {
+        patientSort = button.dataset.patientNameSort
+        localStorage.setItem(PATIENT_SORT_KEY, patientSort)
+        renderPatients()
+      })
+    })
   }
   root.querySelectorAll('[data-patient-sort-header]').forEach(button => {
     button.draggable = false
@@ -1554,17 +1668,16 @@ function patientRow(patient) {
   const tasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task)).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
   const nearestTask = tasks[0]
   const taskCell = nearestTask
-    ? `<button type="button" class="nearest-task-cell ${isTaskOverdue(nearestTask) ? 'overdue' : ''}" data-patient-tasks="${patient.id}"><time>${esc(formatTaskDue(nearestTask))}</time><strong>${esc(compactTaskLabel(nearestTask))}</strong>${tasks.length > 1 ? `<small>+${tasks.length - 1} ${taskWord(tasks.length - 1)}</small>` : ''}</button>`
-    : '<span class="no-active-tasks">Нет активных задач</span>'
+    ? `<button type="button" class="nearest-task-cell ${isTaskOverdue(nearestTask) ? 'overdue' : ''}" data-patient-tasks="${patient.id}"><time>${esc(tableTaskDue(nearestTask))}</time><strong>${esc(compactTaskLabel(nearestTask))}</strong>${patientTaskIndicatorsMarkup(tasks)}</button>`
+    : `<button type="button" class="nearest-task-cell empty" data-patient-tasks="${patient.id}"><span class="no-active-tasks">Нет активных задач</span></button>`
   return `
     <tr data-patient="${patient.id}">
-      <td><button type="button" class="patient-name-btn" data-open-patient="${patient.id}"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong><small>${esc((patient.phones || []).join(' · '))}</small></button><button type="button" class="patient-edit-btn" data-open-patient="${patient.id}">Открыть карточку</button></td>
-      <td>${formatDate(patient.createdAt)}</td>
+      <td><div class="patient-identity"><button type="button" class="patient-name-btn" data-open-patient="${patient.id}" title="Открыть карточку пациента"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong></button><small>${esc((patient.phones || []).join(' · '))}</small></div></td>
       <td>${esc((patient.doctors || []).join(', ') || '—')}</td>
       <td>${formatDate(patient.appointmentDate)}</td>
       <td>${patientStageTaskMarkup(patient)}</td>
       <td>${taskCell}</td>
-      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
+      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button><button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
     </tr>
@@ -1672,9 +1785,7 @@ function openQuickCommentModal(patientId, kind = 'admin') {
     renderPatients()
   }
 
-  modal.addEventListener('click', event => {
-    if (event.target === modal) closeModal()
-  })
+  closeOnBackdropClick(modal, closeModal)
   modal.querySelector('#cancelQuickComment').onclick = closeModal
   modal.querySelector('#saveQuickComment').onclick = saveComment
   textarea.addEventListener('keydown', event => {
@@ -1709,9 +1820,7 @@ function openHistoryModal(patientId) {
     if (event.key === 'Escape') closeModal()
   }
   modal.querySelector('#closeHistory').onclick = closeModal
-  modal.addEventListener('click', event => {
-    if (event.target === modal) closeModal()
-  })
+  closeOnBackdropClick(modal, closeModal)
   document.addEventListener('keydown', handleEscape)
 }
 
@@ -1725,19 +1834,27 @@ function openSpecialNoteModal(patientId) {
   if (!patient) return
   const previous = String(patient.specialNote || '').trim()
   document.querySelector('#specialNoteModal')?.remove()
-  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="specialNoteModal"><div class="dialog special-note-dialog" role="dialog" aria-modal="true" aria-labelledby="specialNoteDialogTitle"><div class="dialog-head"><div><h2 id="specialNoteDialogTitle"><span class="special-note-badge static"><span>!</span></span> Особое примечание</h2><p>${esc(patient.name)}</p></div><button class="icon-btn" data-close-special-note>×</button></div><label class="field special-note-editor"><span>Особое примечание</span><textarea id="specialNoteText" maxlength="200" rows="5">${esc(previous)}</textarea><small><span id="specialNoteEditCounter">${previous.length}</span>/200 · Только короткая важная информация</small></label><div class="dialog-actions"><button class="btn" data-close-special-note>Отмена</button><button class="btn primary" id="saveSpecialNote">Сохранить</button></div></div></div>`)
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="specialNoteModal"><div class="dialog special-note-dialog" role="dialog" aria-modal="true" aria-labelledby="specialNoteDialogTitle"><div class="dialog-head"><div><h2 id="specialNoteDialogTitle"><span class="special-note-badge static"><span>!</span></span> Особое примечание</h2><p>${esc(patient.name)}</p></div><button class="icon-btn" data-close-special-note>×</button></div><label class="field special-note-editor"><span>Особое примечание</span><textarea id="specialNoteText" maxlength="200" rows="5">${esc(previous)}</textarea><small><span id="specialNoteEditCounter">${previous.length}</span>/200 · Оставьте поле пустым, чтобы удалить примечание</small></label><div class="dialog-actions">${previous ? '<button class="btn danger-text" id="deleteSpecialNote">Удалить</button>' : ''}<span></span><button class="btn" data-close-special-note>Отмена</button><button class="btn primary" id="saveSpecialNote">Сохранить</button></div></div></div>`)
   const modal = document.querySelector('#specialNoteModal')
   const textarea = modal.querySelector('#specialNoteText')
   textarea.addEventListener('input', () => { modal.querySelector('#specialNoteEditCounter').textContent = textarea.value.length })
   modal.querySelectorAll('[data-close-special-note]').forEach(button => button.onclick = () => modal.remove())
-  modal.addEventListener('click', event => { if (event.target === modal) modal.remove() })
+  closeOnBackdropClick(modal, () => modal.remove())
+  const finish = next => {
+    const patientModalWasOpen = Boolean(document.querySelector('#patientModal'))
+    updateSpecialNote(patient, next)
+    modal.remove()
+    if (patientModalWasOpen) { document.querySelector('#patientModal')?.remove(); openPatientModal(patient.id) }
+    else renderPatients()
+  }
+  modal.querySelector('#deleteSpecialNote')?.addEventListener('click', () => {
+    if (confirm('Удалить особое примечание?')) finish('')
+  })
   modal.querySelector('#saveSpecialNote').onclick = () => {
     const next = textarea.value.trim()
-    if (!next) return alert('Введите особое примечание или используйте действие «Удалить» в карточке пациента')
     if (next.length > 200) return alert('Особое примечание не может быть длиннее 200 символов')
     if (next === previous) return modal.remove()
-    updateSpecialNote(patient, next)
-    modal.remove(); document.querySelector('#patientModal')?.remove(); openPatientModal(patient.id)
+    finish(next)
   }
   textarea.focus()
 }
@@ -1777,6 +1894,7 @@ function openPatientModal(patientId = null) {
   const activePatientTasks = patientTasks.filter(isTaskActive)
   const completedPatientTasks = patientTasks.filter(isTaskCompleted)
   const nearestTask = activePatientTasks[0] || null
+  const waitlistEntry = activeWaitlistEntries().find(entry => entry.patientId === patient.id)
   const patientHistory = commentHistory(patient.history)
 
   document.body.insertAdjacentHTML('beforeend', `
@@ -1792,7 +1910,7 @@ function openPatientModal(patientId = null) {
         </div>
         <section class="patient-card-section compact-comment-section"><div class="compact-section-head"><h3>Примечание</h3></div><label class="field" data-admin-editor><textarea id="pNewNote" placeholder="Введите примечание">${esc(patient.adminNote || '')}</textarea></label>${original ? '<button type="button" class="text-action all-comments-link" data-open-comments-history>История примечаний</button>' : ''}</section>
         ${specialNoteCardMarkup(patient, original)}
-        ${original ? `<section class="patient-card-section active-tasks-section"><div class="compact-section-head"><h3>Активные задачи · ${activePatientTasks.length}</h3><button class="btn" id="addTaskBtn">+ Задача</button></div><div class="compact-task-list">${activePatientTasks.length ? activePatientTasks.slice(0,3).map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Активных задач нет</div>'}</div>${activePatientTasks.length > 3 ? `<details class="more-patient-tasks"><summary>Показать все · ${activePatientTasks.length}</summary><div class="compact-task-list">${activePatientTasks.slice(3).map(compactPatientTaskMarkup).join('')}</div></details>` : ''}</section>` : ''}
+        ${original ? `<section class="patient-card-section active-tasks-section"><div class="compact-section-head"><h3>Активные задачи · ${activePatientTasks.length}</h3><div class="compact-section-actions"><button class="btn ${waitlistEntry ? 'waitlist-active-btn' : ''}" id="addWaitlistBtn">⏳ ${waitlistEntry ? 'В листе ожидания' : 'Лист ожидания'}</button><button class="btn" id="addTaskBtn">+ Задача</button></div></div><div class="compact-task-list">${activePatientTasks.length ? activePatientTasks.slice(0,3).map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Активных задач нет</div>'}</div>${activePatientTasks.length > 3 ? `<details class="more-patient-tasks"><summary>Показать все · ${activePatientTasks.length}</summary><div class="compact-task-list">${activePatientTasks.slice(3).map(compactPatientTaskMarkup).join('')}</div></details>` : ''}</section>` : ''}
         <details class="patient-card-section completed-tasks-section"><summary>Выполненные задачи · ${completedPatientTasks.length}</summary><div class="compact-task-list">${completedPatientTasks.length ? completedPatientTasks.map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Выполненных задач нет</div>'}</div></details>
         <section class="patient-card-section compact-history-section"><div class="compact-section-head"><h3>История · ${patientHistory.length} записей</h3><button type="button" class="text-action" data-open-full-history>Открыть всю историю</button></div><div class="history-list">${patientHistory.length ? patientHistory.slice(0,4).map(item => historyEntryMarkup(item, true)).join('') : '<div class="compact-empty">История пока пустая</div>'}</div></section>
         <div class="dialog-actions"><button class="btn" data-close>Отмена</button><button class="btn primary" id="savePatient">Сохранить</button></div>
@@ -1810,6 +1928,7 @@ function openPatientModal(patientId = null) {
   })
   modal.querySelectorAll('[data-close]').forEach(button => button.onclick = () => modal.remove())
   modal.querySelector('#addTaskBtn')?.addEventListener('click', () => openTaskModal(null, patient.id))
+  modal.querySelector('#addWaitlistBtn')?.addEventListener('click', () => openWaitlistEntryModal(patient.id, waitlistEntry?.id))
   modal.querySelectorAll('[data-edit-task]').forEach(button => button.onclick = () => openTaskModal(button.dataset.editTask, patient.id))
   modal.querySelectorAll('[data-card-process-task]').forEach(button => button.onclick = () => openTaskExecution(button.dataset.cardProcessTask, { drawerPatientId:patient.id }))
   modal.querySelector('[data-toggle-admin-comment]')?.addEventListener('click', event => {
@@ -1894,6 +2013,7 @@ function openPatientModal(patientId = null) {
     }
     saveState(original ? `Изменена карточка: ${patient.name}` : `Создан пациент: ${patient.name}`)
     modal.remove()
+    if (appointmentChanged && original) offerWaitlistRemoval(patient.id)
     if (!original) {
       patientFilters = { name:'', doctor:'', status:'', group:'all', taskDue:'all' }
       savePatientFilters()
@@ -1951,7 +2071,7 @@ function openUniversalReminderModal(patient) {
   const modal = document.querySelector('#universalReminderModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-reminder]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   setupManualDate(modal, 'universalReminder')
   setupManualTime(modal, 'universalReminder')
   modal.querySelectorAll('[name="reminderTarget"]').forEach(radio => radio.onchange = () => modal.querySelector('#reminderContactMethod').classList.toggle('hidden', radio.value === 'doctor'))
@@ -2006,7 +2126,7 @@ function openPatientActionModal(patientId, action) {
   const modal = document.querySelector('#patientActionModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-action]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   modal.querySelector('#actionCreateCheckup')?.addEventListener('change', event => modal.querySelector('#actionCheckupDateField').classList.toggle('hidden', !event.target.checked))
   modal.querySelector('#actionCreateControl')?.addEventListener('change', event => modal.querySelector('#actionControlDateField').classList.toggle('hidden', !event.target.checked))
   modal.querySelector('#actionRefusalReason')?.addEventListener('change', event => {
@@ -2131,7 +2251,9 @@ function savePatientAction(patient, action, modal) {
   patient.updatedAt = now; patient.updatedBy = currentUser.name; patient.history ||= []
   patient.history.unshift(createHistoryEntry('action', text, { actionIcon:icon, action }))
   saveState(`${definitionForAction(action)}: ${patient.name}`)
-  modal.remove(); renderPatients(); showToast('Действие сохранено.')
+  modal.remove()
+  if (action === 'appointment') offerWaitlistRemoval(patient.id)
+  renderPatients(); showToast('Действие сохранено.')
 }
 
 function definitionForAction(action) {
@@ -2142,8 +2264,8 @@ function openTaskDrawer(patientId, showForm = false) {
   document.querySelector('#taskDrawerOverlay')?.remove()
   const patient = state.patients.find(item => item.id === patientId)
   if (!patient) return
-  const activeTasks = state.tasks.filter(task => task.patientId === patientId && isTaskActive(task))
-  const formVisible = showForm || activeTasks.length === 0
+  const activeTasks = state.tasks.filter(task => task.patientId === patientId && isTaskActive(task)).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
+  const formVisible = showForm
   document.body.insertAdjacentHTML('beforeend', `<div class="drawer-overlay" id="taskDrawerOverlay">
     <aside class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="taskDrawerTitle">
       <div class="drawer-head"><div><h2 id="taskDrawerTitle">${esc(patient.name)} ${specialNoteBadge(patient)}</h2><p>Задачи пациента</p></div><button class="icon-btn" data-close-drawer>×</button></div>
@@ -2212,6 +2334,7 @@ function taskDrawerForm(patient) {
 }
 
 function taskDrawerList(tasks) {
+  if (!tasks.length) return '<div class="empty-box">Нет активных задач</div>'
   return `<div class="drawer-task-list">${tasks.map(task => `<article class="drawer-task">
     <div><strong>${esc(taskTypeDisplay(task))}</strong><time class="${task.dueDate < localDatePlus(0) ? 'late' : ''}">${formatTaskDue(task)}</time></div>
     <small>${esc(task.assignee || 'Без ответственного')}</small>
@@ -2239,13 +2362,165 @@ function openUpcomingTasksModal() {
   const modal = document.querySelector('#upcomingTasksModal')
   const close = () => modal.remove()
   modal.querySelector('[data-close-upcoming]').onclick = close
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   modal.querySelectorAll('[data-process-task]').forEach(button => button.onclick = () => openTaskExecution(button.dataset.processTask, { taskListModal: 'upcoming' }))
   modal.querySelectorAll('[data-upcoming-patient]').forEach(button => button.onclick = () => { close(); openPatientModal(button.dataset.upcomingPatient) })
 }
 
+function activeWaitlistEntries() {
+  return (state.waitlist || []).filter(entry => entry.status !== 'removed')
+}
+
+function updateWaitlistNavCount() {
+  const count = document.querySelector('[data-open-tasks="waitlist"] b')
+  if (count) count.textContent = `(${activeWaitlistEntries().length})`
+}
+
+function waitlistPriorityLabel(value) {
+  return WAITLIST_PRIORITIES.find(([key]) => key === value)?.[1] || 'Средний'
+}
+
+function waitlistPreferenceLabels(entry) {
+  if (entry.preferenceText) return [entry.preferenceText]
+  const selected = new Set(entry.preferences || [])
+  return WAITLIST_PREFERENCES.filter(([key]) => selected.has(key)).map(([,label]) => label)
+}
+
+function waitlistTreatmentLabel(entry) {
+  return entry.treatment === 'Другое' ? entry.customTreatment || 'Другое' : entry.treatment
+}
+
+function renderWaitlist() {
+  const content = document.querySelector('#content')
+  const priorityOrder = { high:0, medium:1, low:2 }
+  const entries = activeWaitlistEntries().filter(entry => {
+    const patient = state.patients.find(item => item.id === entry.patientId)
+    const haystack = [patient?.name, ...(patient?.phones || []), entry.doctor].filter(Boolean).join(' ').toLowerCase()
+    const query = waitlistFilters.search.trim().toLowerCase()
+    return (!query || haystack.includes(query) || normalizePhone(haystack).includes(normalizePhone(query)))
+      && (!waitlistFilters.doctor || entry.doctor === waitlistFilters.doctor)
+      && (!waitlistFilters.treatment || entry.treatment === waitlistFilters.treatment)
+      && (!waitlistFilters.duration || (waitlistFilters.duration === 'custom' ? !WAITLIST_DURATIONS.includes(Number(entry.durationMinutes)) : String(entry.durationMinutes) === waitlistFilters.duration))
+      && (!waitlistFilters.priority || entry.priority === waitlistFilters.priority)
+  }).sort((a, b) => (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1) || String(a.addedAt).localeCompare(String(b.addedAt)))
+  const doctors = [...new Set([...DOCTORS, ...activeWaitlistEntries().map(entry => entry.doctor)])].filter(Boolean).sort((a,b) => a.localeCompare(b,'ru'))
+  content.innerHTML = `<section class="page-head task-page-head waitlist-head"><div><h1>Задачи</h1></div><div class="waitlist-head-actions"><button class="btn" id="newTask">+ Новая задача</button><button class="btn primary" id="addWaitlistEntry">+ Добавить пациента</button></div></section>
+    ${taskNavigationMarkup('waitlist')}
+    <section class="waitlist-controls">
+      <label class="waitlist-search"><span>Поиск</span><input id="waitlistSearch" value="${esc(waitlistFilters.search)}" placeholder="ФИО, телефон или врач"></label>
+      <label><span>Доктор</span><select data-waitlist-filter="doctor"><option value="">Все</option>${doctors.map(value => `<option ${waitlistFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
+      <label><span>Тип лечения</span><select data-waitlist-filter="treatment"><option value="">Все</option>${WAITLIST_TREATMENTS.map(value => `<option ${waitlistFilters.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+      <label><span>Длительность</span><select data-waitlist-filter="duration"><option value="">Любая</option>${WAITLIST_DURATIONS.map(value => `<option value="${value}" ${waitlistFilters.duration === String(value) ? 'selected' : ''}>${value} минут</option>`).join('')}<option value="custom" ${waitlistFilters.duration === 'custom' ? 'selected' : ''}>Другая</option></select></label>
+      <label><span>Приоритет</span><select data-waitlist-filter="priority"><option value="">Любой</option>${WAITLIST_PRIORITIES.map(([value,label]) => `<option value="${value}" ${waitlistFilters.priority === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    </section>
+    <section class="waitlist-panel"><div class="waitlist-table-wrap"><table class="waitlist-table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Доктор</th><th>Что ожидает</th><th>Продолжительность</th><th>Предпочтения</th><th>Дата добавления</th><th>Приоритет</th><th>Комментарий</th><th>Действия</th></tr></thead><tbody>${entries.length ? entries.map(entry => {
+      const patient = state.patients.find(item => item.id === entry.patientId)
+      return `<tr><td><button class="waitlist-patient" data-waitlist-patient="${entry.patientId}"><b>${esc(patient?.name || 'Пациент не найден')}</b></button></td><td>${esc((patient?.phones || []).join(' · ') || '—')}</td><td>${esc(entry.doctor || '—')}</td><td><b>${esc(waitlistTreatmentLabel(entry))}</b></td><td>${Number(entry.durationMinutes) || 0} мин</td><td><span class="waitlist-preferences">${esc(waitlistPreferenceLabels(entry).join(' · ') || 'Без ограничений')}</span></td><td>${formatDate(entry.addedAt)}<small>${esc(entry.addedBy || '')}</small></td><td><span class="waitlist-priority ${entry.priority || 'medium'}">${waitlistPriorityLabel(entry.priority)}</span></td><td><span class="waitlist-comment">${esc(entry.comment || '—')}</span></td><td><div class="waitlist-action-wrap"><button class="waitlist-action-toggle" data-waitlist-menu-toggle="${entry.id}" aria-label="Действия с записью" aria-expanded="false">•••</button><div class="waitlist-action-menu hidden" data-waitlist-menu="${entry.id}"><button data-waitlist-contact="call" data-patient-id="${entry.patientId}">📞 Позвонить</button><button data-waitlist-contact="write" data-patient-id="${entry.patientId}">💬 Написать</button><button data-waitlist-contact="appointment" data-patient-id="${entry.patientId}">📅 Записать на приём</button><button data-edit-waitlist="${entry.id}">✏️ Изменить</button><button class="danger-text" data-remove-waitlist="${entry.id}">🗑 Удалить из листа ожидания</button></div></div></td></tr>`
+    }).join('') : '<tr><td colspan="10" class="empty-row">В листе ожидания нет записей по выбранным условиям</td></tr>'}</tbody></table></div></section>`
+  content.querySelector('#newTask').onclick = () => openTaskModal()
+  content.querySelector('#addWaitlistEntry').onclick = () => openWaitlistEntryModal()
+  setupTaskNavigation(content)
+  const search = content.querySelector('#waitlistSearch')
+  search.addEventListener('input', () => {
+    waitlistFilters.search = search.value
+    const caret = search.selectionStart
+    renderWaitlist()
+    const replacement = document.querySelector('#waitlistSearch')
+    replacement?.focus(); replacement?.setSelectionRange(caret, caret)
+  })
+  content.querySelectorAll('[data-waitlist-filter]').forEach(select => select.onchange = () => { waitlistFilters[select.dataset.waitlistFilter] = select.value; renderWaitlist() })
+  content.querySelectorAll('[data-edit-waitlist]').forEach(button => button.onclick = () => openWaitlistEntryModal(null, button.dataset.editWaitlist))
+  content.querySelectorAll('[data-remove-waitlist]').forEach(button => button.onclick = () => removeWaitlistEntry(button.dataset.removeWaitlist))
+  content.querySelectorAll('[data-waitlist-patient]').forEach(button => button.onclick = () => openPatientModal(button.dataset.waitlistPatient))
+  content.querySelectorAll('[data-waitlist-menu-toggle]').forEach(toggle => toggle.onclick = event => {
+    event.stopPropagation()
+    const menu = content.querySelector(`[data-waitlist-menu="${toggle.dataset.waitlistMenuToggle}"]`)
+    content.querySelectorAll('[data-waitlist-menu]').forEach(item => { if (item !== menu) item.classList.add('hidden') })
+    const opened = menu.classList.toggle('hidden') === false
+    toggle.setAttribute('aria-expanded', String(opened))
+    if (opened) setTimeout(() => document.addEventListener('click', () => { menu.classList.add('hidden'); toggle.setAttribute('aria-expanded','false') }, { once:true }), 0)
+  })
+  content.querySelectorAll('[data-waitlist-contact]').forEach(button => button.onclick = event => {
+    event.stopPropagation()
+    if (button.dataset.waitlistContact === 'write') openTaskModal(null, button.dataset.patientId, 'write')
+    else openPatientActionModal(button.dataset.patientId, button.dataset.waitlistContact)
+  })
+}
+
+function openWaitlistEntryModal(patientId = null, entryId = null) {
+  state.waitlist ||= []
+  const existing = state.waitlist.find(entry => entry.id === entryId)
+    || (patientId ? activeWaitlistEntries().find(entry => entry.patientId === patientId) : null)
+  const patient = state.patients.find(item => item.id === (existing?.patientId || patientId))
+  const entry = existing ? cloneData(existing) : {
+    id:uid(), patientId:patient?.id || '', doctor:patient?.doctors?.[0] || '', treatment:'Консультация', customTreatment:'',
+    durationMinutes:60, preferences:['any_day'], comment:'', priority:'medium', status:'active',
+    addedAt:new Date().toISOString(), addedBy:currentUser.name,
+  }
+  document.querySelector('#waitlistEntryModal')?.remove()
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="waitlistEntryModal"><div class="dialog waitlist-dialog" role="dialog" aria-modal="true" aria-labelledby="waitlistDialogTitle"><div class="dialog-head"><div><h2 id="waitlistDialogTitle">${existing ? 'Изменить запись ожидания' : 'Добавить в лист ожидания'}</h2><p>Пациент остаётся в текущем этапе, его задачи не изменяются</p></div><button class="icon-btn" data-close-waitlist>×</button></div><div class="waitlist-form">
+    <label class="field span-2"><span>Пациент</span><select id="waitlistPatient" ${patientId ? 'disabled' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort(comparePatientNames).map(item => `<option value="${item.id}" ${entry.patientId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.phones?.[0] || 'без телефона')}</option>`).join('')}</select></label>
+    <label class="field"><span>Доктор</span><select id="waitlistDoctor"><option value="">Не указан</option>${[...new Set([...DOCTORS, entry.doctor])].filter(Boolean).map(value => `<option ${entry.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
+    <label class="field"><span>Что ожидает</span><select id="waitlistTreatment">${WAITLIST_TREATMENTS.map(value => `<option ${entry.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+    <label class="field span-2 ${entry.treatment === 'Другое' ? '' : 'hidden'}" id="waitlistCustomTreatmentField"><span>Укажите тип лечения</span><input id="waitlistCustomTreatment" value="${esc(entry.customTreatment || '')}"></label>
+    <label class="field"><span>Продолжительность</span><select id="waitlistDuration">${WAITLIST_DURATIONS.map(value => `<option value="${value}" ${Number(entry.durationMinutes) === value ? 'selected' : ''}>${value} минут</option>`).join('')}<option value="custom" ${!WAITLIST_DURATIONS.includes(Number(entry.durationMinutes)) ? 'selected' : ''}>Другая</option></select></label>
+    <label class="field ${!WAITLIST_DURATIONS.includes(Number(entry.durationMinutes)) ? '' : 'hidden'}" id="waitlistCustomDurationField"><span>Минут</span><input type="number" id="waitlistCustomDuration" min="5" step="5" value="${Number(entry.durationMinutes) || 60}"></label>
+    <fieldset class="waitlist-preference-options span-2"><legend>Предпочтительное время</legend>${WAITLIST_PREFERENCES.map(([value,label]) => `<label><input type="checkbox" name="waitlistPreference" value="${value}" ${(entry.preferences || []).includes(value) ? 'checked' : ''}> ${label}</label>`).join('')}</fieldset>
+    <label class="field span-2"><span>Уточнение предпочтений</span><input id="waitlistPreferenceText" value="${esc(entry.preferenceText || '')}" placeholder="Например: только пятница или после 16:00"></label>
+    <label class="field"><span>Приоритет</span><select id="waitlistPriority">${WAITLIST_PRIORITIES.map(([value,label]) => `<option value="${value}" ${entry.priority === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <label class="field span-2"><span>Комментарий</span><textarea id="waitlistComment" rows="4" placeholder="Дополнительная информация">${esc(entry.comment || '')}</textarea></label>
+  </div><div class="dialog-actions">${existing ? '<button class="btn danger-text" id="deleteWaitlistEntry">Удалить</button><span></span>' : '<span></span>'}<button class="btn" data-close-waitlist>Отмена</button><button class="btn primary" id="saveWaitlistEntry">Сохранить</button></div></div></div>`)
+  const modal = document.querySelector('#waitlistEntryModal')
+  const close = () => modal.remove()
+  modal.querySelectorAll('[data-close-waitlist]').forEach(button => button.onclick = close)
+  closeOnBackdropClick(modal, close)
+  modal.querySelector('#waitlistTreatment').onchange = event => modal.querySelector('#waitlistCustomTreatmentField').classList.toggle('hidden', event.target.value !== 'Другое')
+  modal.querySelector('#waitlistDuration').onchange = event => modal.querySelector('#waitlistCustomDurationField').classList.toggle('hidden', event.target.value !== 'custom')
+  modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); removeWaitlistEntry(existing.id) })
+  modal.querySelector('#saveWaitlistEntry').onclick = () => {
+    const selectedPatientId = modal.querySelector('#waitlistPatient').value
+    if (!selectedPatientId) return alert('Выберите пациента')
+    const treatment = modal.querySelector('#waitlistTreatment').value
+    const customTreatment = modal.querySelector('#waitlistCustomTreatment').value.trim()
+    if (treatment === 'Другое' && !customTreatment) return alert('Укажите тип лечения')
+    const durationSelect = modal.querySelector('#waitlistDuration').value
+    const durationMinutes = durationSelect === 'custom' ? Number(modal.querySelector('#waitlistCustomDuration').value) : Number(durationSelect)
+    if (!Number.isFinite(durationMinutes) || durationMinutes < 5) return alert('Укажите корректную продолжительность')
+    const duplicate = activeWaitlistEntries().find(item => item.patientId === selectedPatientId && item.id !== existing?.id)
+    if (duplicate) return alert('Этот пациент уже находится в листе ожидания')
+    Object.assign(entry, { patientId:selectedPatientId, doctor:modal.querySelector('#waitlistDoctor').value, treatment, customTreatment, durationMinutes,
+      preferences:[...modal.querySelectorAll('[name="waitlistPreference"]:checked')].map(input => input.value), preferenceText:modal.querySelector('#waitlistPreferenceText').value.trim(), comment:modal.querySelector('#waitlistComment').value.trim(),
+      priority:modal.querySelector('#waitlistPriority').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
+    if (existing) Object.assign(existing, entry)
+    else state.waitlist.push(entry)
+    saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
+    updateWaitlistNavCount()
+    close()
+    const patientModalWasOpen = Boolean(document.querySelector('#patientModal'))
+    if (patientModalWasOpen) { document.querySelector('#patientModal')?.remove(); openPatientModal(selectedPatientId) }
+    else renderShell()
+    showToast(existing ? 'Запись ожидания обновлена.' : 'Пациент добавлен в лист ожидания.')
+  }
+}
+
+function removeWaitlistEntry(entryId, skipConfirm = false) {
+  const entry = activeWaitlistEntries().find(item => item.id === entryId)
+  if (!entry || (!skipConfirm && !confirm('Удалить запись из листа ожидания?'))) return false
+  entry.status = 'removed'; entry.removedAt = new Date().toISOString(); entry.removedBy = currentUser.name
+  saveState('Удалена запись из листа ожидания')
+  renderShell()
+  return true
+}
+
+function offerWaitlistRemoval(patientId) {
+  const entry = activeWaitlistEntries().find(item => item.patientId === patientId)
+  if (!entry) return
+  if (confirm('Пациент успешно записан. Удалить запись из листа ожидания?')) removeWaitlistEntry(entry.id, true)
+}
+
 function renderTasks() {
   const content = document.querySelector('#content')
+  if (activeTaskFilter === 'waitlist') return renderWaitlist()
   taskFilters.assignee = 'all'
   const today = todayISO()
   const tomorrow = localDatePlus(1)
@@ -2405,7 +2680,7 @@ function openReminderResultModal(task, options = {}) {
   const modal = document.querySelector('#reminderResultModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-reminder-result]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   setupManualDate(modal, 'reminderRepeat')
   setupManualTime(modal, 'reminderRepeat')
   const saveButton = modal.querySelector('#saveReminderResult')
@@ -2493,7 +2768,7 @@ function openSimpleTaskExecution(task, kind, options = {}) {
   const modal = document.querySelector('#simpleTaskExecutionModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-simple-task]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   if (retry) { setupManualDate(modal, 'simpleRetry'); setupManualTime(modal, 'simpleRetry') }
   const saveButton = modal.querySelector('#saveSimpleTaskResult')
   modal.querySelectorAll('[name="simpleTaskResult"]').forEach(radio => radio.onchange = () => {
@@ -2554,7 +2829,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
   const modal = document.querySelector('#appointmentConfirmationResult')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-confirmation-result]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   setupManualDate(modal, 'confirmationCall')
   setupManualTime(modal, 'confirmationCall')
   setupManualDate(modal, 'confirmationAppointment')
@@ -2671,7 +2946,7 @@ function openCallResultModal(taskId, options = {}) {
   const modal = document.querySelector('#callResultModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-result]').forEach(button => button.onclick = close)
-  modal.addEventListener('click', event => { if (event.target === modal) close() })
+  closeOnBackdropClick(modal, close)
   const followupSection = modal.querySelector('#followupSection')
   const custom = modal.querySelector('#customCallDate')
   const laterOptions = modal.querySelector('#todayLaterOptions')
@@ -2915,6 +3190,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   patient.updatedAt = attemptedAt
   patient.updatedBy = currentUser.name
   saveState(result === 'completed' ? `Выполнена задача: ${task.title}` : `Перенесена задача: ${task.title}`)
+  if (result === 'completed' && outcome?.status === 'appointment') offerWaitlistRemoval(patient.id)
 }
 
 function finishCallResult(options) {
@@ -3241,7 +3517,7 @@ async function importBackup(event) {
     const data = JSON.parse(await file.text())
     if (!Array.isArray(data.patients) || !Array.isArray(data.tasks)) throw new Error('Неверный формат')
     if (!confirm(`Восстановить бэкап: ${data.patients.length} пациентов и ${data.tasks.length} задач? Текущие данные будут заменены.`)) return
-    state = { version: 3, patients: data.patients, tasks: data.tasks, audit: data.audit || [], updatedAt: new Date().toISOString() }
+    state = { version: 3, patients: data.patients, tasks: data.tasks, waitlist: Array.isArray(data.waitlist) ? data.waitlist : [], audit: data.audit || [], updatedAt: new Date().toISOString() }
     saveState('Восстановлена резервная копия')
     renderShell()
   } catch (error) {
@@ -3275,6 +3551,10 @@ document.addEventListener('click', event => {
   if (!badge) return
   event.preventDefault()
   event.stopPropagation()
+  if (badge.dataset.specialNotePatient) {
+    openSpecialNoteModal(badge.dataset.specialNotePatient)
+    return
+  }
   badge.classList.toggle('pinned')
 }, true)
 
