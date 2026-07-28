@@ -2474,7 +2474,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
       <label class="field"><span>Телефон</span><input id="waitlistPatientPhone1" placeholder="+7 900 000-00-00"></label><label class="field"><span>Дополнительный телефон</span><input id="waitlistPatientPhone2"></label>
       <div class="patient-birth-field">${manualDateMarkup('waitlistBirth', 'Дата рождения', '')}</div><div class="patient-appointment-fields">${manualDateMarkup('waitlistAppointment', 'Дата приёма', '')}${manualTimeMarkup('waitlistAppointment', 'Время приёма', '')}</div>
       <label class="field span-2"><span>Примечание</span><textarea id="waitlistPatientNote" rows="3" placeholder="Дополнительная информация о пациенте"></textarea></label>
-      <label class="field span-2"><span>Особое примечание</span><textarea id="waitlistPatientSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="waitlistSpecialNoteCounter">0</span>/200</small></label>
+      <label class="field span-2 waitlist-special-note"><span><i aria-hidden="true">!</i> Особое примечание</span><textarea id="waitlistPatientSpecialNote" maxlength="200" rows="3" placeholder="Короткая важная информация"></textarea><small><span id="waitlistSpecialNoteCounter">0</span>/200</small></label>
     </div></section>
     <label class="field"><span>Доктор</span><select id="waitlistDoctor"><option value="">Не указан</option>${[...new Set([...DOCTORS, entry.doctor])].filter(Boolean).map(value => `<option ${entry.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
     <label class="field"><span>Администратор</span><select id="waitlistAdministrator">${USERS.filter(user => user.role === 'admin').map(user => `<option ${user.name === (entry.administrator || entry.addedBy || currentUser.name) ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label>
@@ -2485,7 +2485,6 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     <fieldset class="waitlist-preference-options span-2"><legend>Предпочтительное время</legend>${WAITLIST_PREFERENCES.map(([value,label]) => `<label><input type="checkbox" name="waitlistPreference" value="${value}" ${(entry.preferences || []).includes(value) ? 'checked' : ''}> ${label}</label>`).join('')}</fieldset>
     <label class="field span-2"><span>Уточнение предпочтений</span><input id="waitlistPreferenceText" value="${esc(entry.preferenceText || '')}" placeholder="Например: только пятница или после 16:00"></label>
     <label class="field"><span>Приоритет</span><select id="waitlistPriority">${WAITLIST_PRIORITIES.map(([value,label]) => `<option value="${value}" ${entry.priority === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-    <label class="field span-2"><span>Комментарий</span><textarea id="waitlistComment" rows="4" placeholder="Дополнительная информация">${esc(entry.comment || '')}</textarea></label>
   </div><div class="dialog-actions">${existing ? '<button class="btn danger-text" id="deleteWaitlistEntry">Удалить</button><span></span>' : '<span></span>'}<button class="btn" data-close-waitlist>Отмена</button><button class="btn primary" id="saveWaitlistEntry">Сохранить</button></div></div></div>`)
   const modal = document.querySelector('#waitlistEntryModal')
   setupManualDate(modal, 'waitlistBirth')
@@ -2551,8 +2550,9 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
         confirmationTask.confirmationAppointmentDate = newPatient.appointmentDate
       }
     }
+    const entryComment = creatingPatient ? (newPatient?.adminNote || '') : (entry.comment || '')
     Object.assign(entry, { patientId:selectedPatientId, doctor:modal.querySelector('#waitlistDoctor').value, treatment, customTreatment, durationMinutes,
-      preferences:[...modal.querySelectorAll('[name="waitlistPreference"]:checked')].map(input => input.value), preferenceText:modal.querySelector('#waitlistPreferenceText').value.trim(), comment:modal.querySelector('#waitlistComment').value.trim(),
+      preferences:[...modal.querySelectorAll('[name="waitlistPreference"]:checked')].map(input => input.value), preferenceText:modal.querySelector('#waitlistPreferenceText').value.trim(), comment:entryComment,
       priority:modal.querySelector('#waitlistPriority').value, administrator:modal.querySelector('#waitlistAdministrator').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
