@@ -2798,8 +2798,7 @@ function openReminderResultModal(task, options = {}) {
   if (!patient) return
   document.querySelector('#reminderResultModal')?.remove()
   const results = [
-    ['appointment','✅ Записали на приём'], ['plan','✅ Определились с планом лечения'], ['plan_sent','✅ План лечения отправлен'],
-    ['called','✅ Позвонили пациенту'], ['written','✅ Написали пациенту'], ['doctor','✅ Доктору напомнили'],
+    ['appointment','✅ Записали на приём'], ['called','✅ Позвонили пациенту'],
     ['postponed','⏳ Отложили'], ['repeat','🔁 Напомнить ещё раз'], ['other','✏️ Другое'],
   ]
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="reminderResultModal"><div class="dialog reminder-result-dialog" role="dialog" aria-modal="true" aria-labelledby="reminderResultTitle">
@@ -2833,7 +2832,7 @@ function openReminderResultModal(task, options = {}) {
     if (!result) return
     if (result === 'other' && !comment) { modal.querySelector('#reminderResultError').textContent = 'Опишите результат'; return }
     const now = new Date().toISOString()
-    const resultLabels = { appointment:'Пациент записан на приём', plan:'Определились с планом лечения', plan_sent:'План лечения отправлен', called:'Пациенту позвонили', written:'Пациенту написали', doctor:'Доктор уведомлён', other:comment }
+    const resultLabels = { appointment:'Пациент записан на приём', called:'Пациенту позвонили', other:comment }
     if (result === 'appointment') {
       const appointmentDate = readManualDate(modal, 'reminderRepeat')
       const appointmentTime = readManualTime(modal, 'reminderRepeat')
