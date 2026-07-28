@@ -2054,7 +2054,7 @@ function createActionTask(patient, { type, title, dueDate, dueAt = null, comment
     history:[historyItem],
   }
   state.tasks.push(task)
-  if (type === 'invite_checkup') patient.status = '🔄 Профосмотр'
+  if (isCheckupTaskType(type)) patient.status = '🔄 Профосмотр'
   return task
 }
 
@@ -2216,6 +2216,7 @@ function savePatientAction(patient, action, modal) {
     createActionTask(patient, { type:'reminder', title:'🔔 Напомнить', dueDate:date, dueAt:`${date}T${time}:00`, comment, reminderTarget:'patient' }, now)
     icon = '🔔'; text = `Напомнить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'invite_checkup') {
+    patient.status = '🔄 Профосмотр'
     createActionTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:date, dueAt:`${date}T${time}:00`, comment }, now)
     icon = '🔄'; text = `Пригласить на профосмотр на ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'thinking') {
@@ -3561,7 +3562,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     else state.tasks.push(task)
     const patient = state.patients.find(p => p.id === patientId)
     if (patient) {
-      if (task.type === 'invite_checkup') patient.status = '🔄 Профосмотр'
+      if (isCheckupTaskType(task.type)) patient.status = '🔄 Профосмотр'
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', taskHistoryText(task.type, title, task.dueDate, task.note), { taskType: task.type }))
       patient.updatedBy = currentUser.name
