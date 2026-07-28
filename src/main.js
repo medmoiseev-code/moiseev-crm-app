@@ -509,7 +509,7 @@ function saveSnapshot() {
   try {
     const snapshots = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || '[]')
     snapshots.unshift({ at: new Date().toISOString(), state: cloneData(state) })
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots.slice(0, 10)))
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshots.slice(0, 3)))
   } catch (error) {
     console.warn('Не удалось создать снимок', error)
   }
@@ -539,7 +539,19 @@ function saveState(action = 'Изменение данных') {
     action,
   })
   state.audit = state.audit.slice(0, 2000)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  const serializedState = JSON.stringify(state)
+  try {
+    localStorage.setItem(STORAGE_KEY, serializedState)
+  } catch (error) {
+    if (error?.name !== 'QuotaExceededError') throw error
+    localStorage.removeItem(SNAPSHOT_KEY)
+    try {
+      localStorage.setItem(STORAGE_KEY, serializedState)
+    } catch (retryError) {
+      alert('Не удалось сохранить данные: хранилище браузера переполнено. Выгрузите резервную копию и обратитесь к администратору.')
+      throw retryError
+    }
+  }
 }
 
 function getCurrentUser() {
