@@ -2761,6 +2761,24 @@ function openTaskExecution(taskId, options = {}) {
   openSimpleTaskExecution(task, kind, options)
 }
 
+function guardTaskResultSave(modal, handler) {
+  return event => {
+    try {
+      return handler(event)
+    } catch (error) {
+      console.error('Не удалось сохранить результат задачи', error)
+      let message = modal.querySelector('[data-task-result-error]')
+      if (!message) {
+        message = document.createElement('small')
+        message.className = 'form-error task-result-save-error'
+        message.dataset.taskResultError = ''
+        modal.querySelector('.dialog-actions')?.before(message)
+      }
+      message.textContent = `Не удалось сохранить результат: ${error?.message || 'неизвестная ошибка'}`
+    }
+  }
+}
+
 function openReminderResultModal(task, options = {}) {
   const patient = state.patients.find(item => item.id === task.patientId)
   if (!patient) return
@@ -2790,7 +2808,7 @@ function openReminderResultModal(task, options = {}) {
     saveButton.disabled = false
   })
   modal.querySelector('#reminderResultComment').oninput = () => { modal.querySelector('#reminderResultError').textContent = '' }
-  saveButton.onclick = () => {
+  saveButton.onclick = guardTaskResultSave(modal, () => {
     const result = modal.querySelector('[name="reminderResult"]:checked')?.value
     const comment = modal.querySelector('#reminderResultComment').value.trim()
     if (!result) return
@@ -2819,7 +2837,7 @@ function openReminderResultModal(task, options = {}) {
     modal.remove()
     finishCallResult(options)
     showToast(result === 'repeat' || result === 'postponed' ? 'Создано новое напоминание.' : 'Напоминание выполнено.')
-  }
+  })
 }
 
 function openSimpleTaskExecution(task, kind, options = {}) {
@@ -2853,7 +2871,7 @@ function openSimpleTaskExecution(task, kind, options = {}) {
     modal.querySelector('#simpleTaskAppointment').classList.toggle('hidden', selected?.[3] !== 'appointment')
     saveButton.disabled = false
   })
-  saveButton.onclick = () => {
+  saveButton.onclick = guardTaskResultSave(modal, () => {
     const value = modal.querySelector('[name="simpleTaskResult"]:checked')?.value
     const selected = config.results.find(([resultValue]) => resultValue === value)
     const comment = modal.querySelector('#simpleTaskComment').value.trim()
@@ -2893,7 +2911,7 @@ function openSimpleTaskExecution(task, kind, options = {}) {
     modal.remove()
     finishCallResult(options)
     showToast(selected[2] ? 'Текущая задача закрыта, новая задача создана.' : 'Результат задачи сохранён.')
-  }
+  })
 }
 
 function isAppointmentConfirmationTask(task) {
@@ -2944,7 +2962,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     modal.querySelector('#confirmationMoveFields').classList.toggle('hidden', radio.value !== 'move')
     modal.querySelector('#confirmationRetryFields').classList.toggle('hidden', radio.value !== 'retry')
   })
-  saveButton.onclick = () => {
+  saveButton.onclick = guardTaskResultSave(modal, () => {
     const reached = modal.querySelector('[name="confirmationReached"]:checked')?.value
     if (!reached) return
     const now = new Date().toISOString()
@@ -3004,7 +3022,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     modal.remove()
     finishCallResult({ ...options, drawerPatientId:null })
     showToast('Результат подтверждения сохранён.')
-  }
+  })
 }
 
 function openCallResultModal(taskId, options = {}) {
@@ -3158,7 +3176,7 @@ function openCallResultModal(taskId, options = {}) {
   }
   picker.addEventListener('change', updateCustomFollowup)
   modal.querySelector('#callResultTime').onchange = updateCustomFollowup
-  saveButton.onclick = () => {
+  saveButton.onclick = guardTaskResultSave(modal, () => {
     const result = modal.querySelector('[name="callResult"]:checked')?.value
     if (!result) return alert('Выберите результат звонка')
     const comment = modal.querySelector('#callResultComment').value.trim()
@@ -3182,7 +3200,7 @@ function openCallResultModal(taskId, options = {}) {
     applyCallResult(task, patient, result, selectedFollowup, comment)
     finishCallResult(options)
     showToast(`Задача перенесена: ${selectedFollowup.description}.`)
-  }
+  })
 }
 
 function collectContactOutcome(modal, status) {
