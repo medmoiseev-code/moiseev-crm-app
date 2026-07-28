@@ -2054,6 +2054,7 @@ function createActionTask(patient, { type, title, dueDate, dueAt = null, comment
     history:[historyItem],
   }
   state.tasks.push(task)
+  if (type === 'invite_checkup') patient.status = '🔄 Профосмотр'
   return task
 }
 
@@ -3560,6 +3561,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     else state.tasks.push(task)
     const patient = state.patients.find(p => p.id === patientId)
     if (patient) {
+      if (task.type === 'invite_checkup') patient.status = '🔄 Профосмотр'
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', taskHistoryText(task.type, title, task.dueDate, task.note), { taskType: task.type }))
       patient.updatedBy = currentUser.name
