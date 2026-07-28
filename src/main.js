@@ -2494,7 +2494,12 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     const doctorSelect = modal.querySelector('#waitlistDoctor')
     if (doctor && ![...doctorSelect.options].some(option => option.value === doctor)) doctorSelect.add(new Option(doctor, doctor))
     if (doctor) doctorSelect.value = doctor
-    showToast(`Пациент «${newPatient.name}» создан и выбран.`)
+    if (!newPatient.appointmentDate) {
+      Object.assign(entry, { patientId:newPatient.id, doctor:doctor || '', administrator:modal.querySelector('#waitlistAdministrator').value })
+      ensureWaitlistTask(entry)
+      saveState(`Создан пациент с задачей «Лист ожидания»: ${newPatient.name}`)
+      showToast(`Пациент «${newPatient.name}» создан. Назначена задача «Лист ожидания».`)
+    } else showToast(`Пациент «${newPatient.name}» создан и выбран.`)
   } }))
   modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); removeWaitlistEntry(existing.id) })
   modal.querySelector('#saveWaitlistEntry').onclick = () => {
@@ -2513,7 +2518,8 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
       priority:modal.querySelector('#waitlistPriority').value, administrator:modal.querySelector('#waitlistAdministrator').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
-    ensureWaitlistTask(existing || entry)
+    const selectedPatient = state.patients.find(item => item.id === selectedPatientId)
+    if (!selectedPatient?.appointmentDate) ensureWaitlistTask(existing || entry)
     saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
     updateWaitlistNavCount()
     close()
