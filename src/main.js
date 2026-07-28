@@ -64,7 +64,7 @@ const REFUSAL_REASONS = [
 ]
 
 const DOCTORS = ['Моисеев Г.А.', 'Климов Ф.С.']
-const STORAGE_KEY = 'moiseev_admin_crm_v05'
+const STORAGE_KEY = 'moiseev_admin_crm_v06'
 const SNAPSHOT_KEY = 'moiseev_admin_crm_snapshots_v04'
 const SESSION_KEY = 'moiseev_admin_crm_user'
 const TABLE_SETTINGS_KEY = 'moiseev_admin_crm_table_v01'
@@ -94,7 +94,7 @@ let shiftTimer = null
 let worktimeLoaded = false
 let userSettings = currentUser ? loadUserSettings(currentUser.id) : defaultUserSettings()
 let settingsTab = 'appearance'
-let waitlistFilters = { search:'', doctor:'', treatment:'', duration:'', priority:'' }
+let waitlistFilters = { search:'', doctor:'', administrator:'', treatment:'', duration:'', priority:'' }
 
 function cloneData(value) {
   return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
@@ -710,7 +710,7 @@ function openDemoResetModal() {
     activeTaskFilter = 'today'
     taskSearchText = ''
     taskFilters = { deadline:'today', type:'all', assignee:'all', state:'active' }
-    waitlistFilters = { search:'', doctor:'', treatment:'', duration:'', priority:'' }
+    waitlistFilters = { search:'', doctor:'', administrator:'', treatment:'', duration:'', priority:'' }
     modal.remove()
     renderShell()
     showToast('Исходные демоданные восстановлены.')
@@ -2399,24 +2399,25 @@ function renderWaitlist() {
     const query = waitlistFilters.search.trim().toLowerCase()
     return (!query || haystack.includes(query) || normalizePhone(haystack).includes(normalizePhone(query)))
       && (!waitlistFilters.doctor || entry.doctor === waitlistFilters.doctor)
+      && (!waitlistFilters.administrator || (entry.administrator || entry.addedBy) === waitlistFilters.administrator)
       && (!waitlistFilters.treatment || entry.treatment === waitlistFilters.treatment)
       && (!waitlistFilters.duration || (waitlistFilters.duration === 'custom' ? !WAITLIST_DURATIONS.includes(Number(entry.durationMinutes)) : String(entry.durationMinutes) === waitlistFilters.duration))
       && (!waitlistFilters.priority || entry.priority === waitlistFilters.priority)
   }).sort((a, b) => (priorityOrder[a.priority] ?? 1) - (priorityOrder[b.priority] ?? 1) || String(a.addedAt).localeCompare(String(b.addedAt)))
   const doctors = [...new Set([...DOCTORS, ...activeWaitlistEntries().map(entry => entry.doctor)])].filter(Boolean).sort((a,b) => a.localeCompare(b,'ru'))
+  const administrators = [...new Set([...USERS.filter(user => user.role === 'admin').map(user => user.name), ...activeWaitlistEntries().map(entry => entry.administrator || entry.addedBy)])].filter(Boolean).sort((a,b) => a.localeCompare(b,'ru'))
   content.innerHTML = `<section class="page-head task-page-head waitlist-head"><div><h1>Задачи</h1></div><div class="waitlist-head-actions"><button class="btn" id="newTask">+ Новая задача</button><button class="btn primary" id="addWaitlistEntry">+ Добавить пациента</button></div></section>
     ${taskNavigationMarkup('waitlist')}
-    <section class="waitlist-controls">
-      <label class="waitlist-search"><span>Поиск</span><input id="waitlistSearch" value="${esc(waitlistFilters.search)}" placeholder="ФИО, телефон или врач"></label>
-      <label><span>Доктор</span><select data-waitlist-filter="doctor"><option value="">Все</option>${doctors.map(value => `<option ${waitlistFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
-      <label><span>Тип лечения</span><select data-waitlist-filter="treatment"><option value="">Все</option>${WAITLIST_TREATMENTS.map(value => `<option ${waitlistFilters.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
-      <label><span>Длительность</span><select data-waitlist-filter="duration"><option value="">Любая</option>${WAITLIST_DURATIONS.map(value => `<option value="${value}" ${waitlistFilters.duration === String(value) ? 'selected' : ''}>${value} минут</option>`).join('')}<option value="custom" ${waitlistFilters.duration === 'custom' ? 'selected' : ''}>Другая</option></select></label>
-      <label><span>Приоритет</span><select data-waitlist-filter="priority"><option value="">Любой</option>${WAITLIST_PRIORITIES.map(([value,label]) => `<option value="${value}" ${waitlistFilters.priority === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-    </section>
-    <section class="waitlist-panel"><div class="waitlist-table-wrap"><table class="waitlist-table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Доктор</th><th>Что ожидает</th><th>Продолжительность</th><th>Предпочтения</th><th>Дата добавления</th><th>Приоритет</th><th>Комментарий</th><th>Действия</th></tr></thead><tbody>${entries.length ? entries.map(entry => {
+    <section class="waitlist-controls"><label class="waitlist-search"><span>Поиск</span><input id="waitlistSearch" value="${esc(waitlistFilters.search)}" placeholder="ФИО, телефон, врач или примечание"></label></section>
+    <section class="waitlist-panel"><div class="waitlist-table-wrap"><table class="waitlist-table"><thead><tr><th>Время / доступность</th><th>Пациент</th><th>Ожидает</th><th><label class="waitlist-header-filter ${waitlistFilters.doctor ? 'active' : ''}"><span>Врач</span><i>⌄</i><select data-waitlist-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${waitlistFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th><th><label class="waitlist-header-filter ${waitlistFilters.administrator ? 'active' : ''}"><span>Администратор</span><i>⌄</i><select data-waitlist-filter="administrator" aria-label="Фильтр по администратору"><option value="">Все администраторы</option>${administrators.map(value => `<option value="${esc(value)}" ${waitlistFilters.administrator === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th><th>Примечание</th><th>Действия</th></tr></thead><tbody>${entries.length ? entries.map(entry => {
       const patient = state.patients.find(item => item.id === entry.patientId)
-      return `<tr><td><button class="waitlist-patient" data-waitlist-patient="${entry.patientId}"><b>${esc(patient?.name || 'Пациент не найден')}</b></button></td><td>${esc((patient?.phones || []).join(' · ') || '—')}</td><td>${esc(entry.doctor || '—')}</td><td><b>${esc(waitlistTreatmentLabel(entry))}</b></td><td>${Number(entry.durationMinutes) || 0} мин</td><td><span class="waitlist-preferences">${esc(waitlistPreferenceLabels(entry).join(' · ') || 'Без ограничений')}</span></td><td>${formatDate(entry.addedAt)}<small>${esc(entry.addedBy || '')}</small></td><td><span class="waitlist-priority ${entry.priority || 'medium'}">${waitlistPriorityLabel(entry.priority)}</span></td><td><span class="waitlist-comment">${esc(entry.comment || '—')}</span></td><td><div class="waitlist-action-wrap"><button class="waitlist-action-toggle" data-waitlist-menu-toggle="${entry.id}" aria-label="Действия с записью" aria-expanded="false">•••</button><div class="waitlist-action-menu hidden" data-waitlist-menu="${entry.id}"><button data-waitlist-contact="call" data-patient-id="${entry.patientId}">📞 Позвонить</button><button data-waitlist-contact="write" data-patient-id="${entry.patientId}">💬 Написать</button><button data-waitlist-contact="appointment" data-patient-id="${entry.patientId}">📅 Записать на приём</button><button data-edit-waitlist="${entry.id}">✏️ Изменить</button><button class="danger-text" data-remove-waitlist="${entry.id}">🗑 Удалить из листа ожидания</button></div></div></td></tr>`
-    }).join('') : '<tr><td colspan="10" class="empty-row">В листе ожидания нет записей по выбранным условиям</td></tr>'}</tbody></table></div></section>`
+      const selectedPreferences = new Set(entry.preferences || [])
+      const primaryPreference = WAITLIST_PREFERENCES.find(([key]) => selectedPreferences.has(key))?.[1] || entry.preferenceText || 'Любое время'
+      const secondaryPreference = entry.preferenceText && entry.preferenceText !== primaryPreference ? entry.preferenceText : ''
+      const priorityTitle = `${waitlistPriorityLabel(entry.priority)} приоритет`
+      const addedTitle = `Добавлен ${formatDate(entry.addedAt)}${entry.addedBy ? ` · ${entry.addedBy}` : ''}`
+      return `<tr data-waitlist-row="${entry.id}" tabindex="0"><td class="waitlist-availability"><b>${esc(primaryPreference)}</b>${secondaryPreference ? `<span>${esc(secondaryPreference)}</span>` : ''}</td><td><div class="waitlist-patient-cell"><i class="waitlist-priority-dot ${entry.priority || 'medium'}" title="${esc(priorityTitle)}" aria-label="${esc(priorityTitle)}"></i><button class="waitlist-patient" data-waitlist-patient="${entry.patientId}"><b>${esc(patient?.name || 'Пациент не найден')}</b><span>${esc(patient?.phones?.[0] || '')}</span></button></div></td><td class="waitlist-treatment"><b>${esc(waitlistTreatmentLabel(entry))}</b><span>${Number(entry.durationMinutes) || 0} минут</span></td><td>${esc(entry.doctor || 'Любой врач')}</td><td>${esc(entry.administrator || entry.addedBy || '—')}</td><td title="${esc(`${entry.comment || 'Без примечания'} · ${addedTitle}`)}"><span class="waitlist-comment">${esc(entry.comment || '—')}</span></td><td><div class="waitlist-action-wrap"><button class="waitlist-action-toggle" data-waitlist-menu-toggle="${entry.id}" aria-label="Действия с записью" aria-expanded="false">•••</button><div class="waitlist-action-menu hidden" data-waitlist-menu="${entry.id}"><button data-waitlist-contact="call" data-patient-id="${entry.patientId}">📞 Позвонить</button><button data-waitlist-contact="write" data-patient-id="${entry.patientId}">💬 Написать</button><button data-waitlist-contact="appointment" data-patient-id="${entry.patientId}">📅 Записать на приём</button><button data-waitlist-contact="task" data-patient-id="${entry.patientId}">➕ Создать задачу</button><button data-edit-waitlist="${entry.id}">✏️ Изменить запись ожидания</button><button class="danger-text" data-remove-waitlist="${entry.id}">🗑 Удалить из листа ожидания</button></div></div></td></tr>`
+    }).join('') : '<tr><td colspan="7" class="empty-row">В листе ожидания нет записей по выбранным условиям</td></tr>'}</tbody></table></div></section>`
   content.querySelector('#newTask').onclick = () => openTaskModal()
   content.querySelector('#addWaitlistEntry').onclick = () => openWaitlistEntryModal()
   setupTaskNavigation(content)
@@ -2429,9 +2430,14 @@ function renderWaitlist() {
     replacement?.focus(); replacement?.setSelectionRange(caret, caret)
   })
   content.querySelectorAll('[data-waitlist-filter]').forEach(select => select.onchange = () => { waitlistFilters[select.dataset.waitlistFilter] = select.value; renderWaitlist() })
-  content.querySelectorAll('[data-edit-waitlist]').forEach(button => button.onclick = () => openWaitlistEntryModal(null, button.dataset.editWaitlist))
-  content.querySelectorAll('[data-remove-waitlist]').forEach(button => button.onclick = () => removeWaitlistEntry(button.dataset.removeWaitlist))
-  content.querySelectorAll('[data-waitlist-patient]').forEach(button => button.onclick = () => openPatientModal(button.dataset.waitlistPatient))
+  content.querySelectorAll('[data-edit-waitlist]').forEach(button => button.onclick = event => { event.stopPropagation(); openWaitlistEntryModal(null, button.dataset.editWaitlist) })
+  content.querySelectorAll('[data-remove-waitlist]').forEach(button => button.onclick = event => { event.stopPropagation(); removeWaitlistEntry(button.dataset.removeWaitlist) })
+  content.querySelectorAll('[data-waitlist-patient]').forEach(button => button.onclick = event => { event.stopPropagation(); openPatientModal(button.dataset.waitlistPatient) })
+  content.querySelectorAll('[data-waitlist-row]').forEach(row => {
+    const open = event => { if (event.type === 'keydown' && !['Enter',' '].includes(event.key)) return; event.preventDefault(); openWaitlistEntryModal(null, row.dataset.waitlistRow) }
+    row.onclick = open
+    row.onkeydown = open
+  })
   content.querySelectorAll('[data-waitlist-menu-toggle]').forEach(toggle => toggle.onclick = event => {
     event.stopPropagation()
     const menu = content.querySelector(`[data-waitlist-menu="${toggle.dataset.waitlistMenuToggle}"]`)
@@ -2443,6 +2449,7 @@ function renderWaitlist() {
   content.querySelectorAll('[data-waitlist-contact]').forEach(button => button.onclick = event => {
     event.stopPropagation()
     if (button.dataset.waitlistContact === 'write') openTaskModal(null, button.dataset.patientId, 'write')
+    else if (button.dataset.waitlistContact === 'task') openTaskModal(null, button.dataset.patientId)
     else openPatientActionModal(button.dataset.patientId, button.dataset.waitlistContact)
   })
 }
@@ -2454,13 +2461,14 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   const patient = state.patients.find(item => item.id === (existing?.patientId || patientId))
   const entry = existing ? cloneData(existing) : {
     id:uid(), patientId:patient?.id || '', doctor:patient?.doctors?.[0] || '', treatment:'Консультация', customTreatment:'',
-    durationMinutes:60, preferences:['any_day'], comment:'', priority:'medium', status:'active',
+    durationMinutes:60, preferences:['any_day'], comment:'', priority:'medium', status:'active', administrator:currentUser.name,
     addedAt:new Date().toISOString(), addedBy:currentUser.name,
   }
   document.querySelector('#waitlistEntryModal')?.remove()
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="waitlistEntryModal"><div class="dialog waitlist-dialog" role="dialog" aria-modal="true" aria-labelledby="waitlistDialogTitle"><div class="dialog-head"><div><h2 id="waitlistDialogTitle">${existing ? 'Изменить запись ожидания' : 'Добавить в лист ожидания'}</h2><p>Пациент остаётся в текущем этапе, его задачи не изменяются</p></div><button class="icon-btn" data-close-waitlist>×</button></div><div class="waitlist-form">
     <label class="field span-2"><span>Пациент</span><select id="waitlistPatient" ${patientId ? 'disabled' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort(comparePatientNames).map(item => `<option value="${item.id}" ${entry.patientId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.phones?.[0] || 'без телефона')}</option>`).join('')}</select></label>
     <label class="field"><span>Доктор</span><select id="waitlistDoctor"><option value="">Не указан</option>${[...new Set([...DOCTORS, entry.doctor])].filter(Boolean).map(value => `<option ${entry.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label>
+    <label class="field"><span>Администратор</span><select id="waitlistAdministrator">${USERS.filter(user => user.role === 'admin').map(user => `<option ${user.name === (entry.administrator || entry.addedBy || currentUser.name) ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label>
     <label class="field"><span>Что ожидает</span><select id="waitlistTreatment">${WAITLIST_TREATMENTS.map(value => `<option ${entry.treatment === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
     <label class="field span-2 ${entry.treatment === 'Другое' ? '' : 'hidden'}" id="waitlistCustomTreatmentField"><span>Укажите тип лечения</span><input id="waitlistCustomTreatment" value="${esc(entry.customTreatment || '')}"></label>
     <label class="field"><span>Продолжительность</span><select id="waitlistDuration">${WAITLIST_DURATIONS.map(value => `<option value="${value}" ${Number(entry.durationMinutes) === value ? 'selected' : ''}>${value} минут</option>`).join('')}<option value="custom" ${!WAITLIST_DURATIONS.includes(Number(entry.durationMinutes)) ? 'selected' : ''}>Другая</option></select></label>
@@ -2490,7 +2498,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     if (duplicate) return alert('Этот пациент уже находится в листе ожидания')
     Object.assign(entry, { patientId:selectedPatientId, doctor:modal.querySelector('#waitlistDoctor').value, treatment, customTreatment, durationMinutes,
       preferences:[...modal.querySelectorAll('[name="waitlistPreference"]:checked')].map(input => input.value), preferenceText:modal.querySelector('#waitlistPreferenceText').value.trim(), comment:modal.querySelector('#waitlistComment').value.trim(),
-      priority:modal.querySelector('#waitlistPriority').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
+      priority:modal.querySelector('#waitlistPriority').value, administrator:modal.querySelector('#waitlistAdministrator').value, status:'active', updatedAt:new Date().toISOString(), updatedBy:currentUser.name })
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
     saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
