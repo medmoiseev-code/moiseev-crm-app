@@ -402,7 +402,7 @@ function patientTaskIndicatorsMarkup(tasks) {
 
 function patientStageTaskMarkup(patient) {
   const treatments = (patient.treatments || []).filter(item => item.status !== 'completed')
-  if (!treatments.length) return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span><small class="treatment-fallback">Линии лечения не добавлены</small>`
+  if (!treatments.length) return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>`
   const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
   const rows = treatments.slice(0, 2).map(treatment => {
     const protectedByTask = activeTasks.some(task => task.treatmentId === treatment.id)
