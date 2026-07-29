@@ -2153,7 +2153,7 @@ function openPatientModal(patientId = null, options = {}) {
       }
     }
     if (appointmentCleared) {
-      completePatientTasks(patient.id, task => isAppointmentConfirmationTask(task), patient.updatedAt, 'Запись отменена в карточке пациента')
+      completePatientTasks(patient.id, task => isAppointmentConfirmationTask(task) && task.appointmentId === patient.appointmentId, patient.updatedAt, 'Запись отменена в карточке пациента')
       createWorkflowTask(patient, { type:'call', title:'📞 Связаться после отмены записи', dueDate:localDatePlus(1), dueTime:'10:00', comment:appointmentClearReason, workflowType:'appointment-cancel', workflowId:`appointment-cancel:${patient.id}:${patient.updatedAt}`, parentTaskId:`appointment-clear:${patient.id}`, sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`appointment-clear:${patient.id}:${patient.updatedAt}` }, patient.updatedAt)
       patient.history.unshift(createHistoryEntry('action', `Запись отменена. ${appointmentClearReason}. Создана задача связи с пациентом.`, { actionIcon:'📅', taskType:'call' }))
     }
@@ -2198,6 +2198,17 @@ function ensureCheckupTreatment(patient, { date, time = '10:00', comment = '', n
     patient.treatments.push(treatment)
   }
   Object.assign(treatment, { name:'Профосмотр', stage:comment || `Связаться ${formatDate(date)} в ${time}`, dueAt:`${date}T${time}:00`, status:'active', updatedAt:now })
+  return treatment
+}
+
+function ensureCareTreatment(patient, { treatmentId = null, name = 'Лечение', stage = 'На лечении', status = 'active', now = new Date().toISOString() } = {}) {
+  patient.treatments ||= []
+  let treatment = patient.treatments.find(item => item.id === treatmentId)
+  if (!treatment) {
+    treatment = { id:uid(), kind:'treatment', name, stage, status, createdAt:now }
+    patient.treatments.push(treatment)
+  }
+  Object.assign(treatment, { name:treatment.name || name, stage, status, updatedAt:now })
   return treatment
 }
 
@@ -2807,6 +2818,11 @@ function createWorkflowTask(patient, spec, createdAt = new Date().toISOString())
     const treatment = ensureCheckupTreatment(patient, { date:effectiveSpec.dueDate, time:effectiveSpec.dueTime || effectiveSpec.dueAt?.slice(11,16) || '10:00', comment:effectiveSpec.comment, now:createdAt })
     effectiveSpec.treatmentId = treatment.id
   }
+  if (!effectiveSpec.treatmentId) {
+    const parentTreatmentId = state.tasks.find(item => item.id === effectiveSpec.parentTaskId)?.treatmentId
+    const activeTreatments = (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))
+    effectiveSpec.treatmentId = parentTreatmentId || (activeTreatments.length === 1 ? activeTreatments[0].id : null)
+  }
   const task = createWorkflowTaskCore(state, patient, effectiveSpec, { id:currentUser?.id, name:currentUser?.name || 'Система', now:createdAt })
   if (spec.reminderMethod) task.reminderMethod = spec.reminderMethod
   if (isCheckupTaskType(spec.type)) patient.status = '🔄 Профосмотр'
@@ -3259,8 +3275,10 @@ function openSimpleTaskExecution(task, kind, options = {}) {
         patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`
         patient.status = '📅 Записан на приём'
         const deadline = appointmentConfirmationDeadline(appointmentDate)
-        patient.appointmentId ||= uid()
-        createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
+        patient.appointmentId = uid()
+        const doctor = patient.treatments?.find(item => item.id === task.treatmentId)?.doctor || patient.doctors.at(-1)
+        const treatment = ensureAppointmentTreatment(patient, { doctor, date:appointmentDate, time:appointmentTime, appointmentId:patient.appointmentId, now })
+        createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${doctor}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
       }
       completeTaskRecord(task, now, selected[1], comment)
       patient.history ||= []
@@ -3428,12 +3446,13 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
         if (comment) patient.adminNote = comment
         patient.appointmentDate = newDate
         patient.appointmentAt = `${newDate}T${newTime}:00`
-        patient.doctors = [doctor]
+        patient.doctors = [...new Set([...(patient.doctors || []), doctor])]
         const historyText = `Подтвердила разговор. Приём перенесён с ${formatDate(appointmentDate)} ${appointmentTime} на ${formatDate(newDate)} ${newTime}${comment ? `. ${comment}` : ''}.`
         patient.history.unshift(createHistoryEntry('action', historyText, { actionIcon:'📞', taskType:'call' }))
-        const appointmentId = uid(); patient.appointmentId = appointmentId
+        const appointmentId = task.appointmentId || patient.appointmentId || uid(); patient.appointmentId = appointmentId
+        const treatment = ensureAppointmentTreatment(patient, { doctor, date:newDate, time:newTime, appointmentId, now })
         const deadline = appointmentConfirmationDeadline(newDate)
-        createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:'Подтвердить приём', appointmentId, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, idempotencyKey:`appointment-confirmation:${appointmentId}` }, now)
+        createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${doctor}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:'Подтвердить приём', appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, idempotencyKey:`appointment-confirmation:${appointmentId}` }, now)
         }
       }
     }
@@ -3818,9 +3837,10 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
       patient.appointmentDate = outcome.appointmentDate
       patient.appointmentAt = `${outcome.appointmentDate}T${outcome.appointmentTime}:00`
       if (outcome.doctor && !patient.doctors?.includes(outcome.doctor)) patient.doctors = [...(patient.doctors || []), outcome.doctor]
-      patient.appointmentId ||= uid()
+      patient.appointmentId = uid()
       const deadline = appointmentConfirmationDeadline(outcome.appointmentDate)
-      createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(outcome.appointmentDate)} в ${outcome.appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, attemptedAt)
+      const treatment = ensureAppointmentTreatment(patient, { doctor:outcome.doctor || 'Врач не указан', date:outcome.appointmentDate, time:outcome.appointmentTime, appointmentId:patient.appointmentId, now:attemptedAt })
+      createWorkflowTask(patient, { ...continuationMeta, type:'call', title:`📞 Подтвердить приём · ${outcome.doctor || 'врач'}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(outcome.appointmentDate)} в ${outcome.appointmentTime}`, appointmentId:patient.appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, attemptedAt)
     }
     if (outcome?.status === 'reminder') {
       const dueAt = `${outcome.reminderDate}T${outcome.reminderTime}:00`
@@ -3829,9 +3849,11 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
     const settings = loadSystemSettings()
     if (outcome?.status === 'treatment') {
       const dueDate = localDatePlus(Number(settings.treatmentControlDays) || 7)
-      createWorkflowTask(patient, { ...continuationMeta, type:'postop_control', title:'🪡 Первый контроль лечения', dueDate, dueTime:'10:00', comment:'Первый контроль после начала лечения', idempotencyKey:`treatment-control:${task.id}` }, attemptedAt)
+      const treatment = ensureCareTreatment(patient, { treatmentId:task.treatmentId, stage:'Первый контроль лечения', now:attemptedAt })
+      createWorkflowTask(patient, { ...continuationMeta, type:'postop_control', title:'🪡 Первый контроль лечения', dueDate, dueTime:'10:00', comment:'Первый контроль после начала лечения', treatmentId:treatment.id, idempotencyKey:`treatment-control:${task.id}` }, attemptedAt)
     }
     if (outcome?.status === 'treatment_completed') {
+      if (task.treatmentId) ensureCareTreatment(patient, { treatmentId:task.treatmentId, stage:'Лечение завершено', status:'completed', now:attemptedAt })
       const dueDate = dateAfterMonths(Number(settings.checkupAfterTreatmentMonths) || 6)
       createWorkflowTask(patient, { ...continuationMeta, type:'invite_checkup', title:'🦷 Профосмотр', dueDate, dueTime:'10:00', comment:'Профосмотр после завершения лечения', idempotencyKey:`treatment-checkup:${task.id}` }, attemptedAt)
     }
