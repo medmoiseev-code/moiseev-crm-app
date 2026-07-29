@@ -1716,7 +1716,7 @@ function patientRow(patient) {
       <td>${formatDate(patient.appointmentDate)}</td>
       <td>${patientStageTaskMarkup(patient)}</td>
       <td>${taskCell}</td>
-      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" ${action.value === 'appointment' ? `data-patient-action="appointment"` : `data-patient-task-action="${action.value}"`} data-patient-id="${patient.id}">${action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button></div></div></td>
+      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" ${['appointment','invite_checkup'].includes(action.value) ? `data-patient-action="${action.value}"` : `data-patient-task-action="${action.value}"`} data-patient-id="${patient.id}">${action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
     </tr>
@@ -2170,6 +2170,7 @@ function openPatientActionModal(patientId, action) {
       ${action === 'decision' ? `<label class="field span-2"><span>По какому вопросу пациент принимает решение? *</span><input id="actionDecisionSubject" placeholder="Например, имплантация"></label><label class="field"><span>Причина *</span><select id="actionDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="actionDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="actionDecisionOther"></textarea></label>` : ''}
       ${needsDate ? manualDateMarkup('action', action === 'appointment' ? 'Дата приёма' : action === 'decision' ? 'Дата следующего контакта' : 'Дата задачи', action === 'invite_checkup' ? dateAfterMonths(6) : localDatePlus(1)) : ''}
       ${needsTime ? manualTimeMarkup('action', action === 'appointment' ? 'Время приёма' : 'Время', action === 'call' ? '12:00' : '10:00') : ''}
+      ${action === 'invite_checkup' ? '<div class="quick-dates span-2 checkup-month-options"><button type="button" data-checkup-months="1">Через 1 месяц</button><button type="button" data-checkup-months="3">Через 3 месяца</button><button type="button" data-checkup-months="6" class="active">Через 6 месяцев</button></div>' : ''}
       ${needsDoctor ? `<label class="field"><span>Врач</span><select id="actionDoctor"><option value="">Не указан</option>${DOCTORS.map(doctor => `<option>${esc(doctor)}</option>`).join('')}</select></label>` : ''}
       ${action === 'decision' ? `<label class="field"><span>Ответственный администратор *</span><select id="actionDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="actionDecisionService"></label><label class="field span-2"><span>Последнее обещание пациента</span><input id="actionDecisionPromise"></label>` : ''}
       ${action === 'appointment' ? `<section class="appointment-confirmation span-2"><label class="check-field"><input type="checkbox" id="actionCreateConfirmation" checked disabled> Задача подтверждения записи обязательна</label><p>Дата выполнения задачи: <strong id="actionConfirmationDate">${formatDate(appointmentConfirmationDeadline(localDatePlus(1)).dueDate)}</strong></p><label class="field"><span>Комментарий задачи</span><textarea id="actionConfirmationComment">Подтвердить приём</textarea></label></section>` : ''}
@@ -2194,6 +2195,13 @@ function openPatientActionModal(patientId, action) {
   modal.querySelector('#actionDecisionReasonCode')?.addEventListener('change', event => modal.querySelector('#actionDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other'))
   if (needsDate) setupAppointmentActionFields(modal)
   if (needsTime) setupManualTime(modal, 'action')
+  modal.querySelectorAll('[data-checkup-months]').forEach(button => button.addEventListener('click', () => {
+    const date = dateAfterMonths(Number(button.dataset.checkupMonths))
+    modal.querySelector('#actionDate').value = date
+    modal.querySelector('#actionDateText').value = formatDate(date)
+    modal.querySelector('#actionDateError').textContent = ''
+    modal.querySelectorAll('[data-checkup-months]').forEach(option => option.classList.toggle('active', option === button))
+  }))
   if (completedTreatment) { setupManualDate(modal, 'actionCheckup'); setupManualTime(modal, 'actionCheckup') }
   if (action === 'treatment') { setupManualDate(modal, 'actionControl'); setupManualTime(modal, 'actionControl') }
   modal.querySelector('#savePatientAction').onclick = () => savePatientAction(patient, action, modal)
@@ -2279,8 +2287,9 @@ function savePatientAction(patient, action, modal) {
     icon = '🔔'; text = `Напомнить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'invite_checkup') {
     patient.status = '🔄 Профосмотр'
-    createWorkflowTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:date, dueTime:time, comment, workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${date}` }, now)
-    icon = '🔄'; text = `Пригласить на профосмотр на ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
+    const checkupTask = createWorkflowTask(patient, { type:'contact', title:'📞 Связаться по профосмотру', dueDate:date, dueTime:time, comment, workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${date}` }, now)
+    Object.assign(checkupTask, { actionReason:'checkup', contactRecipient:'patient', contactChannel:'call' })
+    icon = '🔄'; text = `Создана задача «Связаться по профосмотру» на ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'decision') {
     const normalizedSubject = decisionSubject.toLocaleLowerCase('ru-RU')
     const decisionTask = createWorkflowTask(patient, { type:'decision', title:`Уточнить решение по ${decisionSubject}`, dueDate:date, dueTime:time, assignee:decisionAssignee, comment:[decisionReason, decisionOtherReason, comment].filter(Boolean).join('. '), workflowType:'decision', workflowId:`decision:patient:${patient.id}:${normalizedSubject}`, parentTaskId:`quick-action:${patient.id}`, sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`quick-decision:${patient.id}:${normalizedSubject}` }, now)
