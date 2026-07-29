@@ -261,6 +261,15 @@ function migrateAppointmentTreatments(data) {
   const today = new Date(); today.setHours(0,0,0,0)
   for (const patient of data.patients || []) {
     patient.treatments ||= []
+    for (const task of (data.tasks || []).filter(item => item.patientId === patient.id && isTaskActive(item) && (isCheckupTaskType(item.type) || item.actionReason === 'checkup' || item.workflowType === 'checkup'))) {
+      let treatment = patient.treatments.find(item => item.kind === 'checkup' && item.status !== 'completed')
+      if (!treatment) {
+        treatment = { id:uid(), kind:'checkup', name:'Профосмотр', stage:task.comment || task.note || `Связаться ${formatDate(task.dueDate)}`, status:'active', createdAt:task.createdAt || new Date().toISOString(), updatedAt:new Date().toISOString() }
+        patient.treatments.push(treatment)
+        changed = true
+      }
+      if (task.treatmentId !== treatment.id) { task.treatmentId = treatment.id; changed = true }
+    }
     for (const entry of patient.history || []) {
       const text = String(entry.text || '')
       const match = text.match(/Записан на приём (\d{2})\.(\d{2})\.(\d{4}) в (\d{2}:\d{2})/i)
@@ -2181,6 +2190,17 @@ function ensureAppointmentTreatment(patient, { doctor, date, time, appointmentId
   return treatment
 }
 
+function ensureCheckupTreatment(patient, { date, time = '10:00', comment = '', now = new Date().toISOString() }) {
+  patient.treatments ||= []
+  let treatment = patient.treatments.find(item => item.kind === 'checkup' && item.status !== 'completed')
+  if (!treatment) {
+    treatment = { id:uid(), kind:'checkup', name:'Профосмотр', stage:'', status:'active', createdAt:now }
+    patient.treatments.push(treatment)
+  }
+  Object.assign(treatment, { name:'Профосмотр', stage:comment || `Связаться ${formatDate(date)} в ${time}`, dueAt:`${date}T${time}:00`, status:'active', updatedAt:now })
+  return treatment
+}
+
 function createActionTask(patient, { type, title, dueDate, dueAt = null, comment = '', reminderTarget = null }, createdAt) {
   const historyItem = { id:uid(), at:createdAt, author:currentUser.name, action:'created', text:taskHistoryText(type, title, dueDate, comment) }
   const task = {
@@ -2389,7 +2409,8 @@ function savePatientAction(patient, action, modal) {
     icon = '🔔'; text = `Напомнить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'invite_checkup') {
     patient.status = '🔄 Профосмотр'
-    const checkupTask = createWorkflowTask(patient, { type:'contact', title:'📞 Связаться по профосмотру', dueDate:date, dueTime:time, comment, workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${date}` }, now)
+    const treatment = ensureCheckupTreatment(patient, { date, time, comment, now })
+    const checkupTask = createWorkflowTask(patient, { type:'contact', title:'📞 Связаться по профосмотру', dueDate:date, dueTime:time, comment, treatmentId:treatment.id, workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${date}` }, now)
     Object.assign(checkupTask, { actionReason:'checkup', contactRecipient:'patient', contactChannel:'call' })
     icon = '🔄'; text = `Создана задача «Связаться по профосмотру» на ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'decision') {
@@ -2781,7 +2802,12 @@ function movePatientToWaitlist(patient, sourceTask, dueDate, dueTime, comment, c
 }
 
 function createWorkflowTask(patient, spec, createdAt = new Date().toISOString()) {
-  const task = createWorkflowTaskCore(state, patient, spec, { id:currentUser?.id, name:currentUser?.name || 'Система', now:createdAt })
+  const effectiveSpec = { ...spec }
+  if (isCheckupTaskType(effectiveSpec.type) && !effectiveSpec.treatmentId) {
+    const treatment = ensureCheckupTreatment(patient, { date:effectiveSpec.dueDate, time:effectiveSpec.dueTime || effectiveSpec.dueAt?.slice(11,16) || '10:00', comment:effectiveSpec.comment, now:createdAt })
+    effectiveSpec.treatmentId = treatment.id
+  }
+  const task = createWorkflowTaskCore(state, patient, effectiveSpec, { id:currentUser?.id, name:currentUser?.name || 'Система', now:createdAt })
   if (spec.reminderMethod) task.reminderMethod = spec.reminderMethod
   if (isCheckupTaskType(spec.type)) patient.status = '🔄 Профосмотр'
   return task
