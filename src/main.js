@@ -44,6 +44,7 @@ const WAITLIST_PRIORITIES = [['high','Высокий'],['medium','Средний
 const PATIENT_ACTIONS = [
   { value:'contact', label:'📞 Связаться' },
   { value:'appointment', label:'📅 Записать на приём' },
+  { value:'invite_checkup', label:'🦷 Пригласить на профосмотр' },
 ]
 
 const REFUSAL_REASONS = [
