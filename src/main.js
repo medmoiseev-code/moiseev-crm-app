@@ -691,6 +691,12 @@ function renderShell() {
   if (activeTab === 'settings') renderSettings()
 }
 
+function mirrorPatientNote(patient, text) {
+  const note = String(text || '').trim()
+  if (patient && note) patient.adminNote = note
+  return note
+}
+
 function openBusinessValidationModal() {
   const report = validateBusinessState(state)
   document.querySelector('#businessValidationModal')?.remove()
@@ -1762,7 +1768,7 @@ function setupInlineCommentInputs(root) {
       patient.history ||= []
       patient.history.unshift(createHistoryEntry(isDoctor ? 'doctor_comment' : 'admin_comment', text))
       if (isDoctor) patient.doctorComment = text
-      else patient.adminNote = text
+      mirrorPatientNote(patient, text)
       patient.updatedAt = updatedAt
       patient.updatedBy = currentUser.name
       saveState(`${isDoctor ? 'Добавлен комментарий врача' : 'Добавлено примечание'}: ${patient.name}`)
@@ -1816,7 +1822,7 @@ function openQuickCommentModal(patientId, kind = 'admin') {
     patient.history ||= []
     patient.history.unshift(createHistoryEntry(type, text))
     if (isDoctor) patient.doctorComment = text
-    else patient.adminNote = text
+    mirrorPatientNote(patient, text)
     patient.updatedAt = updatedAt
     patient.updatedBy = currentUser.name
     saveState(`${isDoctor ? 'Добавлен комментарий врача' : 'Добавлено примечание'}: ${patient.name}`)
@@ -1906,6 +1912,7 @@ function updateSpecialNote(patient, nextValue) {
   patient.specialNote = next
   patient.specialNoteUpdatedBy = currentUser.name
   patient.specialNoteUpdatedAt = new Date().toISOString()
+  mirrorPatientNote(patient, next)
   patient.updatedAt = patient.specialNoteUpdatedAt
   patient.updatedBy = currentUser.name
   patient.history ||= []
@@ -2139,6 +2146,7 @@ function openUniversalReminderModal(patient) {
     const comment = modal.querySelector('#universalReminderComment').value.trim()
     if (!dueDate || !dueTime) return
     if (!comment) { modal.querySelector('#universalReminderCommentError').textContent = 'Комментарий обязателен'; return }
+    mirrorPatientNote(patient, comment)
     const title = target === 'doctor' ? '👨‍⚕️ Напоминание доктору' : method === 'write' ? '➤ Напоминание пациенту' : '📞 Напоминание пациенту'
     const now = new Date().toISOString()
     const task = createWorkflowTask(patient, { type:'reminder', title, dueDate, dueTime, comment, reminderTarget:target, workflowType:'reminder', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`reminder:${patient.id}:${dueDate}T${dueTime}:${target}` }, now)
@@ -2406,6 +2414,7 @@ function openTaskDrawer(patientId, showForm = false) {
       history: [{ id:uid(), at:createdAt, author:currentUser.name, action:'created', text:taskHistoryText(type, typeLabel, dueDate, comment) }],
     }
     state.tasks.push(task)
+    mirrorPatientNote(patient, comment)
     patient.updatedAt = createdAt
     patient.updatedBy = currentUser.name
     patient.history ||= []
@@ -2614,7 +2623,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
         doctors:[modal.querySelector('#waitlistDoctor').value].filter(Boolean), birthDate, appointmentDate:'', appointmentAt:null,
         doctorComment:'', specialNote, specialNoteUpdatedAt:specialNote ? now : null, specialNoteUpdatedBy:specialNote ? currentUser.name : '', status:'🆕 Новый', adminNote:note, urgent:false, createdAt:now, updatedAt:now, updatedBy:currentUser.name, externalId:null,
         history:[createHistoryEntry('system', 'Создана карточка пациента через лист ожидания')] }
-      if (note) newPatient.history.unshift(createHistoryEntry('admin_comment', note))
+      if (note) { newPatient.history.unshift(createHistoryEntry('admin_comment', note)); mirrorPatientNote(newPatient, note) }
       if (specialNote) newPatient.history.unshift(createHistoryEntry('special_note', `Добавлено особое примечание: «${specialNote}».`, { actionIcon:'!', oldValue:'', newValue:specialNote }))
       selectedPatientId = newPatient.id
     }
@@ -2718,6 +2727,7 @@ function openWaitlistCompletionModal(entryId) {
     const draft = cloneData(state)
     const draftEntry = draft.waitlist.find(item => item.id === entry.id)
     const draftPatient = draft.patients.find(item => item.id === patient.id)
+    mirrorPatientNote(draftPatient, reason)
     const now = new Date().toISOString()
     const actor = { id:currentUser.id, name:currentUser.name, now }
     const linkedTasks = draft.tasks.filter(task => task.patientId === patient.id && isTaskActive(task) && (task.waitlistEntryId === entry.id || task.workflowId === `waitlist:${entry.id}`))
@@ -2986,6 +2996,7 @@ function openReminderResultModal(task, options = {}) {
   saveButton.onclick = guardTaskResultSave(modal, () => {
     const result = modal.querySelector('[name="reminderResult"]:checked')?.value
     const comment = modal.querySelector('#reminderResultComment').value.trim()
+    mirrorPatientNote(patient, comment)
     if (!result) return
     const now = new Date().toISOString()
     const resultLabels = { appointment:'Пациент записан на приём' }
@@ -3028,6 +3039,7 @@ function openReminderResultModal(task, options = {}) {
     }
     if (!state.tasks.some(item => item.patientId === patient.id && item.id !== task.id && isTaskActive(item) && (item.parentTaskId === task.id || item.workflowId === task.workflowId || item.sourceEntityId === task.id))) throw new Error('Результат напоминания не определил связанное следующее действие')
     const savedPatient = state.patients.find(item => item.id === patient.id)
+    mirrorPatientNote(savedPatient, comment)
     savedPatient.updatedAt = now
     savedPatient.updatedBy = currentUser.name
     saveState(result === 'postponed' ? `Пациент добавлен в лист ожидания: ${patient.name}` : result === 'repeat' ? `Перенесено напоминание: ${patient.name}` : `Выполнено напоминание: ${patient.name}`)
@@ -3242,6 +3254,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
           const cancelOutcome = modal.querySelector('#confirmationCancelOutcome').value
           const cancelReason = modal.querySelector('#confirmationCancelReason').value.trim()
           if (!cancelReason) return alert('Укажите причину отмены и следующего действия')
+          mirrorPatientNote(patient, cancelReason)
           if (cancelOutcome === 'do_not_call') {
             const draft = cloneData(state)
             finalizePatientAsDoNotContactCore(draft, patient.id, cancelReason, { id:currentUser.id, name:currentUser.name, now })
@@ -3262,6 +3275,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
             const applied = applyDecisionOutcomeCore({ state:decisionDraft,taskId:task.id,actor:{id:currentUser.id,name:currentUser.name,now},formData:{ subject:modal.querySelector('#confirmationDecisionSubject').value.trim(), reasonCode, reason:decisionReason, otherReason:modal.querySelector('#confirmationDecisionOther').value.trim(), dueDate:nextDate, dueTime:nextTime, assignee:modal.querySelector('#confirmationDecisionAssignee').value, doctor:patient.doctors?.[0] || '', service:modal.querySelector('#confirmationDecisionService').value.trim(), comment:[cancelReason,comment].filter(Boolean).join('. ') } })
             const savedPatient = applied.state.patients.find(item => item.id === patient.id)
             savedPatient.history.unshift(createHistoryEntry('action', `Запись на ${formatDate(appointmentDate)} в ${appointmentTime} отменена. ${cancelReason}.`, { actionIcon:'📅', taskType:'appointment' }))
+            mirrorPatientNote(savedPatient, cancelReason)
             state = applied.state
             saveState(`Запись отменена, решение не принято: ${patient.name}`)
             modal.remove(); finishCallResult(options); showToast('Создана задача «Уточнить решение».'); return
@@ -3870,6 +3884,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     else state.tasks.push(task)
     const patient = state.patients.find(p => p.id === patientId)
     if (patient) {
+      mirrorPatientNote(patient, task.note)
       if (isCheckupTaskType(task.type)) patient.status = '🔄 Профосмотр'
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', taskHistoryText(task.type, title, task.dueDate, task.note), { taskType: task.type }))

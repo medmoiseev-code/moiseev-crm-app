@@ -73,6 +73,7 @@ describe('workflow core', () => {
     const state = base({ waitlist:[{ id:'w1',patientId:'p1',status:'active' }] })
     finalizePatientAsDoNotContact(state,'p1','Просьба пациента',actor)
     expect(state.patients[0].status).toBe('🚫 Не звонить')
+    expect(state.patients[0].adminNote).toBe('Просьба пациента')
     expect(state.tasks.every(item => item.status === 'cancelled')).toBe(true)
     expect(state.waitlist[0].status).toBe('removed')
   })

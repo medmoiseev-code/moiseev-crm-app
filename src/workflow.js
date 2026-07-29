@@ -108,6 +108,7 @@ export function finalizePatientAsDoNotContact(draft, patientId, reason, actor = 
   const now = actor.now || new Date().toISOString()
   patient.status = DO_NOT_CONTACT_STATUS
   patient.doNotContactReason = String(reason).trim()
+  patient.adminNote = String(reason).trim()
   patient.updatedAt = now
   patient.updatedBy = actor.name || 'Система'
   draft.tasks.filter(task => task.patientId === patientId && taskActive(task)).forEach(task => {
