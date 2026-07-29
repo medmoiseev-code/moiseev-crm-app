@@ -75,7 +75,7 @@ const TASK_FILTERS_KEY = storageKey('moiseev_admin_crm_task_filters_v01')
 const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
 const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
-  { key: 'name', width: 255 }, { key: 'doctors', width: 165 }, { key: 'appointmentDate', width: 140 },
+  { key: 'name', width: 255 }, { key: 'appointmentDate', width: 140 },
   { key: 'status', width: 200 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
   { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
@@ -404,6 +404,7 @@ function patientStageTaskMarkup(patient) {
   const treatments = (patient.treatments || []).filter(item => item.status !== 'completed')
   if (!treatments.length) return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>`
   const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
+  const stageDoctors = (patient.treatments || []).map(item => item.doctor || (DOCTORS.includes(item.name) ? item.name : '')).filter(Boolean)
   const rows = treatments.slice(0, 2).map(treatment => {
     const protectedByTask = activeTasks.some(task => task.treatmentId === treatment.id)
     const statusIcon = treatment.status === 'waiting' ? '⏳' : '🦷'
@@ -925,7 +926,7 @@ function patientMatchesFilters(patient) {
     || (patientFilters.taskDue === 'today' && activeTasks.some(task => task.dueDate === localDatePlus(0)))
     || (patientFilters.taskDue === 'upcoming' && getUpcomingActiveTasks(activeTasks).length > 0)
   return (!query || identityValues.some(value => value.includes(query) || (phoneQuery && normalizePhone(value).includes(phoneQuery))))
-    && (!patientFilters.doctor || (patient.doctors || []).includes(patientFilters.doctor))
+    && (!patientFilters.doctor || stageDoctors.includes(patientFilters.doctor) || (!stageDoctors.length && (patient.doctors || []).includes(patientFilters.doctor)))
     && (!patientFilters.status
       || (patientFilters.status === 'refusal_or_dnc'
         ? ['❌ Отказ', '🚫 Не звонить'].includes(normalizePatientStatus(patient.status))
@@ -1460,7 +1461,7 @@ function renderPatients() {
   const patients = sortPatients([...state.patients]
     .filter(patientMatches)
     .filter(patientMatchesFilters))
-  const doctors = [...new Set(state.patients.flatMap(patient => patient.doctors || []))].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru'))
+  const doctors = [...new Set(state.patients.flatMap(patient => [...(patient.doctors || []), ...(patient.treatments || []).map(item => item.doctor || (DOCTORS.includes(item.name) ? item.name : '')).filter(Boolean)]))].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ru'))
 
   content.innerHTML = `
     <section class="patients-toolbar">
@@ -1474,16 +1475,15 @@ function renderPatients() {
         <table class="patient-table">
           <thead><tr>
             <th>${patientNameSortMenuMarkup()}</th>
-            <th><label class="table-header-filter ${patientFilters.doctor ? 'active' : ''}"><span>Врач</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
-            <th><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label></th>
+            <th><div class="stage-header-filters"><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label><label class="table-header-filter stage-doctor-filter ${patientFilters.doctor ? 'active' : ''}" title="Фильтр этапов по врачу"><span>${patientFilters.doctor ? esc(patientFilters.doctor) : 'Врач'}</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр этапов по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></div></th>
             <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
             <th>Действия</th>
             <th>Примечание</th>
             <th>${patientHeaderSortButton('history', 'История')}</th>
           </tr></thead>
           <tbody>
-            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="8">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
+            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="7">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1760,7 +1760,6 @@ function patientRow(patient) {
   return `
     <tr data-patient="${patient.id}">
       <td><div class="patient-identity"><button type="button" class="patient-name-btn" data-open-patient="${patient.id}" title="Открыть карточку пациента"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong></button><small>${esc((patient.phones || []).join(' · '))}</small></div></td>
-      <td>${esc((patient.doctors || []).join(', ') || '—')}</td>
       <td>${formatDate(patient.appointmentDate)}</td>
       <td>${patientStageTaskMarkup(patient)}</td>
       <td>${taskCell}</td>
