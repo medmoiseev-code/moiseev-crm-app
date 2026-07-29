@@ -76,7 +76,7 @@ const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
 const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
   { key: 'name', width: 255 },
-  { key: 'status', width: 300 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
+  { key: 'status', width: 480 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
   { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
 
@@ -409,7 +409,7 @@ function patientStageTaskMarkup(patient) {
     const nextTask = linkedTasks[0]
     const protectedByTask = Boolean(nextTask)
     const statusIcon = treatment.status === 'waiting' ? '⏳' : '🦷'
-    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><b>${statusIcon} ${esc(treatment.name)}</b><small class="treatment-stage-text">${esc(treatment.stage || 'Этап не указан')}</small>${nextTask ? `<span class="treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(compactTaskLabel(nextTask))}</span></span>` : '<span class="treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${statusIcon} ${esc(treatment.name)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(treatment.stage || 'Этап не указан')}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<span class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(compactTaskLabel(nextTask))}</span></span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
   return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`
 }
@@ -1153,7 +1153,7 @@ function loadPatientTableSettings() {
     }
     if (widths.history === 360) widths.history = 450
     if (widths.addTask === 105) widths.addTask = 190
-    if (widths.status === 200) widths.status = 300
+    if ([200,300].includes(widths.status)) widths.status = 480
     if (saved.rowHeights && typeof saved.rowHeights === 'object' && !Array.isArray(saved.rowHeights)) {
       for (const [patientId, savedHeight] of Object.entries(saved.rowHeights)) {
         const height = Number(savedHeight)
