@@ -3749,10 +3749,10 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal" id="taskModal"><div class="dialog task-dialog">
-      <div class="dialog-head"><div><h2>${original ? 'Редактирование действия' : 'Новое действие'}</h2><p>У каждого незавершённого этапа должен оставаться следующий контроль</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="dialog-head"><div><h2>${original ? 'Редактирование действия' : esc(TASK_TYPES.find(item => item.value === task.type)?.label || 'Новое действие')}</h2><p>У каждого незавершённого этапа должен оставаться следующий контроль</p></div><button class="icon-btn" data-close>×</button></div>
       <div class="task-form">
         <label class="field"><span>Пациент</span><select id="tPatient" ${original ? 'disabled title="Для переноса задачи используйте отдельное действие"' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}" ${p.id === task.patientId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
-        <label class="field"><span>Действие</span><select id="tType">${original && !TASK_TYPES.some(item => item.value === task.type) ? `<option value="${esc(task.type)}" selected>${esc(taskTypeDisplay(task))} (старый тип)</option>` : ''}${TASK_TYPES.map(t => `<option value="${t.value}" ${t.value === task.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+        <input type="hidden" id="tType" value="${esc(task.type)}">
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactChannelField"><span>Способ связи</span><select id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${task.contactChannel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
@@ -3762,7 +3762,6 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         <label class="field span-2"><span>Уточнение</span><input id="tTitle" value="${esc(task.title)}" placeholder="Необязательно — короткая деталь действия"></label>
         ${manualDateMarkup('t', 'Дата', task.dueDate)}
         ${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}
-        <label class="field"><span>Ответственный</span><select id="tAssignee">${USERS.filter(u=>u.role==='admin').map(u => `<option ${u.name === task.assignee ? 'selected' : ''}>${u.name}</option>`).join('')}</select></label>
         <label class="field span-2"><span>Комментарий</span><textarea id="tNote" placeholder="Детали и договорённости">${esc(task.note || '')}</textarea></label>
         <label class="field"><span>Статус</span><input value="${isTaskCompleted(task) ? 'Выполнена' : task.status === 'cancelled' ? 'Отменена' : 'Активна'}" readonly title="Завершить активную задачу можно только через выбор результата"></label>
       </div>
@@ -3791,7 +3790,6 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     modal.querySelector('#tInternalObjectField').classList.toggle('hidden', !internal)
     if (!original) modal.querySelector('#tTitle').value = ''
   }
-  taskType.addEventListener('change', updateReminderRecipient)
   updateReminderRecipient()
   modal.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => {
     const value = datePlus(Number(b.dataset.plus))
@@ -3836,7 +3834,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       title,
       dueDate,
       dueAt: `${dueDate}T${dueTime}:00`,
-      assignee: modal.querySelector('#tAssignee').value,
+      assignee: original ? (task.assignee || currentUser.name) : currentUser.name,
       note: modal.querySelector('#tNote').value.trim(),
       status:status === 'open' ? TASK_STATUS_ACTIVE : status,
       completedAt: task.completedAt || null,
