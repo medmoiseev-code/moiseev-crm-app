@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  applyDecisionOutcome, applyTaskOutcome, createWorkflowTask, ensureWaitlistTask, finalizePatientAsDoNotContact,
+  applyDecisionOutcome, applyTaskOutcome, createWorkflowTask, ensureTreatmentCoverage, ensureWaitlistTask, finalizePatientAsDoNotContact,
   migrateBusinessState, prepareImportedState, validateBusinessState, validateFutureDateTime,
 } from '../src/workflow.js'
 import { createInitialState } from '../src/initial-data.js'
@@ -44,6 +44,20 @@ describe('workflow core', () => {
     const state = base({ patients:[patient({ treatments:[{ id:'tr1',name:'Терапия',status:'active' }] })], tasks:[task({ treatmentId:'tr1' })] })
     const next = createWorkflowTask(state,state.patients[0],{ type:'contact',title:'Следующий контакт',dueDate:'2030-01-03',dueTime:'10:00',parentTaskId:'t1' },actor)
     expect(next.treatmentId).toBe('tr1')
+  })
+
+  it('automatically restores coverage for every active treatment line', () => {
+    const state = base({ patients:[patient({ treatments:[{ id:'tr1',name:'Терапия',status:'active' },{ id:'tr2',name:'Ортопедия',status:'waiting' }] })], tasks:[] })
+    const created = ensureTreatmentCoverage(state,actor)
+    expect(created).toHaveLength(2)
+    expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'treatment_without_action')).toBe(false)
+  })
+
+  it('requires an explicit scope for an unlinked active task', () => {
+    const state = base({ tasks:[task({ treatmentId:null,scope:null })] })
+    expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'task_without_scope')).toBe(true)
+    state.tasks[0].scope = 'patient'
+    expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'task_without_scope')).toBe(false)
   })
 
   it('rolls back when outcome has no related continuation', () => {

@@ -75,7 +75,7 @@ export function createWorkflowTask(draft, patient, spec, actor = {}) {
     status:TASK_STATUS_ACTIVE, completedAt:null, createdAt:now, createdBy:actor.name || 'Система',
     workflowId:meta.workflowId, workflowType:meta.workflowType, parentTaskId:spec.parentTaskId || null,
     sourceEntityType:meta.sourceEntityType, sourceEntityId:meta.sourceEntityId, idempotencyKey,
-    treatmentId:inheritedTreatmentId,
+    treatmentId:inheritedTreatmentId, scope:inheritedTreatmentId ? 'treatment' : (spec.scope || 'patient'),
     ...(spec.waitlistEntryId ? { waitlistEntryId:spec.waitlistEntryId } : {}),
     ...(spec.appointmentId ? { appointmentId:spec.appointmentId } : {}),
   }
@@ -130,7 +130,11 @@ export function migrateBusinessState(input, actor = {}) {
   const now = actor.now || new Date().toISOString()
   let changed = false
   // TODO: согласовать отдельные правила миграции удалённых legacy-этапов из старых резервных копий.
-  draft.tasks.forEach(task => { if (task.status === 'open') { task.status = TASK_STATUS_ACTIVE; changed = true } })
+  draft.tasks.forEach(task => {
+    if (task.status === 'open') { task.status = TASK_STATUS_ACTIVE; changed = true }
+    const expectedScope = task.treatmentId ? 'treatment' : (task.scope || 'patient')
+    if (task.scope !== expectedScope) { task.scope = expectedScope; changed = true }
+  })
   for (const patient of draft.patients || []) {
     if (!Array.isArray(patient.treatments)) { patient.treatments = []; changed = true }
     if (LEGACY_PATIENT_STATUS_MAP.has(patient.status ?? '')) {
@@ -166,6 +170,25 @@ export function migrateBusinessState(input, actor = {}) {
   return { state:draft, changed }
 }
 
+export function ensureTreatmentCoverage(draft, actor = {}) {
+  const now = actor.now || new Date().toISOString()
+  const dueDate = new Date(new Date(now).getTime() + 86400000).toISOString().slice(0,10)
+  const created = []
+  for (const patient of draft.patients || []) {
+    if (patient.status === DO_NOT_CONTACT_STATUS) continue
+    for (const treatment of (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))) {
+      if ((draft.tasks || []).some(task => task.patientId === patient.id && task.treatmentId === treatment.id && taskActive(task))) continue
+      created.push(createWorkflowTask(draft, patient, {
+        type:'control', title:`Уточнить дальнейшее действие · ${treatment.name || 'Лечение'}`, dueDate, dueTime:'10:00',
+        comment:`Автоматический контроль: линия «${treatment.name || 'Лечение'}» осталась без следующей задачи`, treatmentId:treatment.id,
+        workflowType:'treatment', workflowId:`treatment:${treatment.id}`, sourceEntityType:'treatment', sourceEntityId:treatment.id,
+        idempotencyKey:`treatment-safety:${treatment.id}`,
+      }, { ...actor, now }))
+    }
+  }
+  return created
+}
+
 export function validateBusinessState(state, options = {}) {
   const errors = [], warnings = []
   const patients = state.patients || [], tasks = state.tasks || [], waitlist = state.waitlist || []
@@ -194,6 +217,7 @@ export function validateBusinessState(state, options = {}) {
       const owner = patients.find(patient => patient.id === task.patientId)
       if (!owner?.treatments?.some(treatment => treatment.id === task.treatmentId)) errors.push({ code:'orphan_treatment_task', taskId:task.id, patientId:task.patientId, message:'Задача ссылается на отсутствующее лечение' })
     }
+    if (taskActive(task) && !task.treatmentId && task.scope !== 'patient' && task.scope !== 'system') errors.push({ code:'task_without_scope', taskId:task.id, patientId:task.patientId, message:'Активная задача не привязана к линии и не отмечена как общая задача пациента' })
     if (!KNOWN_TASK_TYPES.has(task.type)) warnings.push({ code:'unknown_task_type', taskId:task.id, message:`Неизвестный тип задачи: ${task.type}` })
     if (task.status === 'open') warnings.push({ code:'legacy_open_status', taskId:task.id, message:'Устаревший статус open' })
     if (taskActive(task) && task.dueAt && new Date(task.dueAt).getTime() < (options.now ? new Date(options.now).getTime() : Date.now())) warnings.push({ code:'overdue_task', taskId:task.id, message:'Активная задача просрочена' })
@@ -288,7 +312,7 @@ export function prepareImportedState(data, actor = {}) {
   const candidate = clone({ ...data, waitlist:data.waitlist || [], audit:Array.isArray(data.audit) ? data.audit : [] })
   const migrated = migrateBusinessState(candidate, actor)
   const report = validateBusinessState(migrated.state, { now:actor.now })
-  const criticalCodes = new Set(['duplicate_id','orphan_task','orphan_waitlist','orphan_treatment_task','treatment_without_action','unknown_patient_status','broken_waitlist_task','duplicate_waitlist_task','booked_without_date','dnc_with_tasks','decision_result_without_task','decision_changed_stage','decision_without_assignee','decision_broken_workflow','duplicate_decision','decision_not_future'])
+  const criticalCodes = new Set(['duplicate_id','orphan_task','orphan_waitlist','orphan_treatment_task','treatment_without_action','task_without_scope','unknown_patient_status','broken_waitlist_task','duplicate_waitlist_task','booked_without_date','dnc_with_tasks','decision_result_without_task','decision_changed_stage','decision_without_assignee','decision_broken_workflow','duplicate_decision','decision_not_future'])
   const critical = report.errors.filter(item => criticalCodes.has(item.code))
   return { state:migrated.state, report, critical, counts:{ patients:migrated.state.patients.length, tasks:migrated.state.tasks.length, waitlist:migrated.state.waitlist.length }, migrated:migrated.changed }
 }

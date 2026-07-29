@@ -1,7 +1,7 @@
 import { createInitialState } from './initial-data.js'
 import { worktime, worktimeCloudEnabled, activeShift, startShift, endShift, durationMinutes, durationSeconds, requestCorrection, reviewCorrection, setHourlyRate, syncWorktime, refreshWorktime } from './worktime.js'
 import { THEMES, defaultUserSettings, loadUserSettings, saveUserSettings, loadSystemSettings, saveSystemSettings, applyUserSettings } from './settings.js'
-import { TASK_STATUS_ACTIVE, TASK_STATUS_COMPLETED, TASK_STATUS_CANCELLED, applyDecisionOutcome as applyDecisionOutcomeCore, createWorkflowTask as createWorkflowTaskCore, ensureWaitlistTask as ensureWaitlistTaskCore, finalizePatientAsDoNotContact as finalizePatientAsDoNotContactCore, migrateBusinessState, prepareImportedState, validateBusinessState, validateFutureDateTime } from './workflow.js'
+import { TASK_STATUS_ACTIVE, TASK_STATUS_COMPLETED, TASK_STATUS_CANCELLED, applyDecisionOutcome as applyDecisionOutcomeCore, createWorkflowTask as createWorkflowTaskCore, ensureTreatmentCoverage, ensureWaitlistTask as ensureWaitlistTaskCore, finalizePatientAsDoNotContact as finalizePatientAsDoNotContactCore, migrateBusinessState, prepareImportedState, validateBusinessState, validateFutureDateTime } from './workflow.js'
 import { QA_MODE, storageKey } from './storage.js'
 
 const USERS = [
@@ -584,6 +584,11 @@ function undoLastChange() {
 }
 
 function saveState(action = 'Изменение данных') {
+  const safetyTasks = ensureTreatmentCoverage(state, { id:currentUser?.id, name:currentUser?.name || 'Система', now:new Date().toISOString() })
+  for (const task of safetyTasks) {
+    const patient = state.patients.find(item => item.id === task.patientId)
+    patient?.history?.unshift(createHistoryEntry('task', `Автоматически создан контроль: ${cleanTaskLabel(task.title)} на ${formatTaskDue(task)}.`, { actionIcon:'🔎', taskType:'control' }))
+  }
   saveSnapshot()
   state.updatedAt = new Date().toISOString()
   state.audit.unshift({
@@ -2269,7 +2274,7 @@ function createActionTask(patient, { type, title, dueDate, dueAt = null, comment
   const historyItem = { id:uid(), at:createdAt, author:currentUser.name, action:'created', text:taskHistoryText(type, title, dueDate, comment) }
   const task = {
     id:uid(), patientId:patient.id, type, title, dueDate, dueAt:dueAt || (dueDate ? `${dueDate}T10:00:00` : null), comment, note:comment,
-    assignee:currentUser.name, reminderTarget, status:'active', completedAt:null,
+    assignee:currentUser.name, reminderTarget, scope:'patient', status:'active', completedAt:null,
     createdAt, createdBy:currentUser.name, updatedAt:createdAt, updatedBy:currentUser.name,
     history:[historyItem],
   }
@@ -2582,9 +2587,12 @@ function openTaskDrawer(patientId, showForm = false) {
     const typeLabel = TASK_TYPES.find(item => item.value === type)?.label || 'Задача'
     const comment = overlay.querySelector('#drawerTaskComment').value.trim()
     const createdAt = new Date().toISOString()
+    const activeTreatments = (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))
+    const automaticTreatmentId = activeTreatments.length === 1 ? activeTreatments[0].id : null
     const task = {
       id: uid(), patientId, type, title: typeLabel, dueDate, dueAt:dueTime ? `${dueDate}T${dueTime}:00` : null, comment, note: comment,
       assignee: overlay.querySelector('#drawerTaskAssignee').value, reminderTarget: type === 'reminder' ? overlay.querySelector('#drawerReminderTarget').value : null,
+      treatmentId:automaticTreatmentId, scope:automaticTreatmentId ? 'treatment' : 'patient',
       status: 'active', completedAt: null, createdAt, createdBy: currentUser.name,
       history: [{ id:uid(), at:createdAt, author:currentUser.name, action:'created', text:taskHistoryText(type, typeLabel, dueDate, comment) }],
     }
@@ -4062,6 +4070,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       contactRecipient:selectedType === 'contact' ? contactRecipient : null,
       contactChannel:selectedType === 'contact' ? contactChannel : null,
       treatmentId:modal.querySelector('#tTreatment')?.value || null,
+      scope:modal.querySelector('#tTreatment')?.value ? 'treatment' : 'patient',
       reminderTarget: selectedType === 'reminder' ? modal.querySelector('#tReminderTarget').value : null,
       title,
       dueDate,
