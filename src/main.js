@@ -1427,6 +1427,13 @@ function patientNameSortMenuMarkup() {
   return `<div class="patient-name-sort"><button type="button" class="table-header-control active" data-patient-name-sort-toggle aria-haspopup="menu" aria-expanded="false" title="${esc(selectedLabel)}"><span>ФИО</span><i>${direction}</i></button><div class="patient-name-sort-menu hidden" role="menu">${options.map(([value,label]) => `<button type="button" role="menuitemradio" aria-checked="${normalizedSort === value}" class="${normalizedSort === value ? 'active' : ''}" data-patient-name-sort="${value}"><span>${label}</span><i>${normalizedSort === value ? '✓' : ''}</i></button>`).join('')}</div></div>`
 }
 
+function patientStageFilterMenuMarkup(doctors) {
+  const stageOptions = [['','Все этапы'],['checkup_status_or_task','Профосмотр'],['refusal_or_dnc','Отказ или не звонить'],...STATUS_OPTIONS.filter(Boolean).map(value => [value,normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu,'')])]
+  const active = Boolean(patientFilters.status || patientFilters.doctor)
+  const buttons = (kind, options, selected) => options.map(([value,label]) => `<button type="button" class="${selected === value ? 'active' : ''}" data-stage-filter-kind="${kind}" data-stage-filter-value="${esc(value)}"><span>${esc(label)}</span><i>${selected === value ? '✓' : ''}</i></button>`).join('')
+  return `<div class="patient-stage-filter"><button type="button" class="table-header-control ${active ? 'active' : ''}" data-patient-stage-filter-toggle aria-haspopup="menu" aria-expanded="false"><span>Этап</span><i>${active ? '●' : '⌄'}</i></button><div class="patient-stage-filter-menu hidden" role="menu"><strong>Этап</strong>${buttons('status',stageOptions,patientFilters.status)}<strong>Врач</strong>${buttons('doctor',[['','Все врачи'],...doctors.map(value => [value,value])],patientFilters.doctor)}</div></div>`
+}
+
 function taskNavigationMarkup(activeFilter = '') {
   const today = todayISO()
   const tomorrow = localDatePlus(1)
@@ -1476,7 +1483,7 @@ function renderPatients() {
           <thead><tr>
             <th>${patientNameSortMenuMarkup()}</th>
             <th>${patientHeaderSortButton('appointmentDate', 'Дата приёма')}</th>
-            <th><div class="stage-header-filters"><label class="table-header-filter ${patientFilters.status ? 'active' : ''}"><span>Этап</span><i>${patientFilters.status ? '●' : '⌄'}</i><select data-header-patient-filter="status" aria-label="Фильтр по этапу"><option value="">Все этапы</option>${patientFilters.status === 'refusal_or_dnc' ? '<option value="refusal_or_dnc" selected>Отказ или не звонить</option>' : ''}${patientFilters.status === 'checkup_status_or_task' ? '<option value="checkup_status_or_task" selected>Профосмотр: этап или задача</option>' : ''}${STATUS_OPTIONS.filter(Boolean).map(value => `<option value="${esc(value)}" ${patientFilters.status === value ? 'selected' : ''}>${esc(normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu, ''))}</option>`).join('')}</select></label><label class="table-header-filter stage-doctor-filter ${patientFilters.doctor ? 'active' : ''}" title="Фильтр этапов по врачу"><span>${patientFilters.doctor ? esc(patientFilters.doctor) : 'Врач'}</span><i>${patientFilters.doctor ? '●' : '⌄'}</i><select data-header-patient-filter="doctor" aria-label="Фильтр этапов по врачу"><option value="">Все врачи</option>${doctors.map(value => `<option value="${esc(value)}" ${patientFilters.doctor === value ? 'selected' : ''}>${esc(value)}</option>`).join('')}</select></label></div></th>
+            <th>${patientStageFilterMenuMarkup(doctors)}</th>
             <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
             <th>Действия</th>
             <th>Примечание</th>
@@ -2004,6 +2011,24 @@ function openTreatmentModal(patientId, treatmentId = null) {
     patient.updatedAt = treatment.updatedAt; patient.updatedBy = currentUser.name
     saveState(`${original ? 'Обновлено' : 'Добавлено'} лечение: ${patient.name}`)
     modal.remove(); document.querySelector('#patientModal')?.remove(); openPatientModal(patient.id)
+  }
+  const stageFilterToggle = root.querySelector('[data-patient-stage-filter-toggle]')
+  const stageFilterMenu = root.querySelector('.patient-stage-filter-menu')
+  if (stageFilterToggle && stageFilterMenu) {
+    ;['pointerdown','mousedown','click'].forEach(type => stageFilterToggle.addEventListener(type, event => event.stopPropagation()))
+    stageFilterToggle.addEventListener('click', () => {
+      const opened = stageFilterMenu.classList.toggle('hidden') === false
+      stageFilterToggle.setAttribute('aria-expanded', String(opened))
+      if (opened) setTimeout(() => document.addEventListener('click', () => { stageFilterMenu.classList.add('hidden'); stageFilterToggle.setAttribute('aria-expanded','false') }, { once:true }), 0)
+    })
+    stageFilterMenu.querySelectorAll('[data-stage-filter-kind]').forEach(button => {
+      ;['pointerdown','mousedown','click'].forEach(type => button.addEventListener(type, event => event.stopPropagation()))
+      button.addEventListener('click', () => {
+        patientFilters[button.dataset.stageFilterKind] = button.dataset.stageFilterValue
+        if (button.dataset.stageFilterKind === 'status') patientFilters.group = 'all'
+        savePatientFilters(); renderPatients()
+      })
+    })
   }
 }
 
