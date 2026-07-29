@@ -3765,11 +3765,10 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         <label class="field hidden" id="tInternalReasonField"><span>Что сделать</span><select id="tInternalReason">${INTERNAL_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field hidden" id="tInternalObjectField"><span>По какому вопросу</span><select id="tInternalObject">${INTERNAL_OBJECTS.map(([value,label]) => `<option value="${value}" ${task.actionObject === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
-        ${manualDateMarkup('t', 'Дата', task.dueDate)}
-        ${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}
+        <div class="custom-datetime-grid span-2 action-datetime-row">${manualDateMarkup('t', 'Дата', task.dueDate)}${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}</div>
+        <div class="quick-dates span-2"><button type="button" data-plus="1">Завтра</button><button type="button" data-plus="3">Через 3 дня</button><button type="button" data-plus="7">Через неделю</button><button type="button" data-plus="180">Через полгода</button></div>
         <label class="field span-2"><span>Комментарий</span><textarea id="tNote" placeholder="Детали и договорённости">${esc(task.note || '')}</textarea></label>
       </div>
-      <div class="quick-dates"><button type="button" data-plus="1">Завтра</button><button type="button" data-plus="3">Через 3 дня</button><button type="button" data-plus="7">Через неделю</button><button type="button" data-plus="180">Через полгода</button></div>
       <div class="dialog-actions"><span></span><button class="btn" data-close>Отмена</button><button class="btn primary" id="saveTask">Сохранить</button></div>
     </div></div>
   `)
