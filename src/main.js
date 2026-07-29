@@ -29,7 +29,7 @@ const TASK_TYPES = [
 
 const CONTACT_REASONS = [['decision','🤔 Получить решение по лечению'],['reminder','🔔 Напомнить'],['next_stage','🦷 Пригласить на следующий этап'],['ready','✅ Сообщить о готовности'],['reschedule','📅 Согласовать или перенести запись'],['wellbeing','🩺 Уточнить самочувствие'],['consent','📄 Получить документы, данные или согласие'],['finance','💳 Финансовый вопрос'],['other','💬 Другое']]
 const CONTACT_RECIPIENTS = [['patient','👤 Пациент'],['doctor','👨‍⚕️ Доктор'],['laboratory','🧪 Лаборатория'],['other','💬 Другое']]
-const CONTACT_CHANNELS = [['call','📞 Позвонить'],['whatsapp','🟢 WhatsApp'],['telegram','➤ Telegram'],['max','🟣◉ MAX'],['sms','💬 SMS'],['email','📧 Email']]
+const CONTACT_CHANNELS = [['call','📞 Позвонить'],['whatsapp','🟢 WhatsApp'],['telegram','➤ Telegram'],['max','MAX'],['sms','💬 SMS'],['email','📧 Email']]
 const INTERNAL_REASONS = [['check','Проверить'],['prepare','Подготовить'],['transfer','Передать'],['receive','Получить'],['wait','Ожидать результат'],['other','Другое']]
 const INTERNAL_OBJECTS = [['ct','КТ или анализы'],['laboratory','Лабораторная работа'],['doctor','Решение врача'],['documents','Документы'],['payment','Оплата'],['approval','Согласование'],['other','Другое']]
 
@@ -3761,7 +3761,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         <input type="hidden" id="tType" value="${esc(task.type)}">
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-        <label class="field" id="tContactChannelField"><span>Способ связи</span><select id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${task.contactChannel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <label class="field" id="tContactChannelField"><span>Способ связи</span><div class="contact-channel-control ${task.contactChannel === 'max' ? 'is-max' : ''}"><i class="max-channel-icon" aria-hidden="true"></i><select id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${task.contactChannel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></label>
         <label class="field hidden" id="tInternalReasonField"><span>Что сделать</span><select id="tInternalReason">${INTERNAL_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field hidden" id="tInternalObjectField"><span>По какому вопросу</span><select id="tInternalObject">${INTERNAL_OBJECTS.map(([value,label]) => `<option value="${value}" ${task.actionObject === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
@@ -3781,6 +3781,9 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   setupManualDate(modal, 't')
   setupManualTime(modal, 't')
   const taskType = modal.querySelector('#tType')
+  const contactChannel = modal.querySelector('#tContactChannel')
+  const contactChannelControl = modal.querySelector('.contact-channel-control')
+  contactChannel?.addEventListener('change', () => contactChannelControl?.classList.toggle('is-max', contactChannel.value === 'max'))
   const reminderRecipient = modal.querySelector('#tReminderRecipient')
   const updateReminderRecipient = () => {
     reminderRecipient.classList.toggle('hidden', taskType.value !== 'reminder')
