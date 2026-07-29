@@ -43,7 +43,6 @@ const WAITLIST_PRIORITIES = [['high','Высокий'],['medium','Средний
 
 const PATIENT_ACTIONS = [
   { value:'contact', label:'📞 Связаться' },
-  { value:'internal', label:'⚙️ Выполнить / проверить' },
   { value:'appointment', label:'📅 Записать на приём' },
 ]
 
