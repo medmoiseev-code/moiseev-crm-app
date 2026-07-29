@@ -2178,6 +2178,7 @@ function openPatientActionModal(patientId, action) {
       ${completedTreatment ? `<label class="check-field span-2 action-checkup-offer"><input type="checkbox" id="actionCreateCheckup" checked disabled> Профосмотр после лечения обязателен</label><div id="actionCheckupDateField" class="custom-datetime-grid">${manualDateMarkup('actionCheckup', 'Дата профосмотра', dateAfterMonths(6))}${manualTimeMarkup('actionCheckup', 'Время профосмотра', '10:00')}</div>` : ''}
       ${action === 'treatment' ? `<label class="check-field span-2 action-control-offer"><input type="checkbox" id="actionCreateControl" checked disabled> Контрольная задача обязательна</label><div class="custom-datetime-grid" id="actionControlDateField">${manualDateMarkup('actionControl', 'Дата контроля', localDatePlus(7))}${manualTimeMarkup('actionControl', 'Время контроля', '10:00')}</div>` : ''}
       <label class="field span-2"><span>Комментарий</span><textarea id="actionComment" placeholder="Необязательно"></textarea></label>
+      ${action === 'invite_checkup' ? '<div class="checkup-comment-options span-2"><button type="button" data-checkup-comment="Проф. гигиена">Проф. гигиена</button><button type="button" data-checkup-comment="Контрольный осмотр после лечения">Контрольный осмотр после лечения</button><button type="button" data-checkup-comment="Контрольный осмотр после имплантации">Контрольный осмотр после имплантации</button><button type="button" data-checkup-comment="Контрольный осмотр после протезирования">Контрольный осмотр после протезирования</button></div>' : ''}
     </div>
     <div class="dialog-actions"><button class="btn" data-close-action>Отмена</button><button class="btn primary" id="savePatientAction">Сохранить</button></div>
   </div></div>`)
@@ -2201,6 +2202,10 @@ function openPatientActionModal(patientId, action) {
     modal.querySelector('#actionDateText').value = formatDate(date)
     modal.querySelector('#actionDateError').textContent = ''
     modal.querySelectorAll('[data-checkup-months]').forEach(option => option.classList.toggle('active', option === button))
+  }))
+  modal.querySelectorAll('[data-checkup-comment]').forEach(button => button.addEventListener('click', () => {
+    modal.querySelector('#actionComment').value = button.dataset.checkupComment
+    modal.querySelectorAll('[data-checkup-comment]').forEach(option => option.classList.toggle('active', option === button))
   }))
   if (completedTreatment) { setupManualDate(modal, 'actionCheckup'); setupManualTime(modal, 'actionCheckup') }
   if (action === 'treatment') { setupManualDate(modal, 'actionControl'); setupManualTime(modal, 'actionControl') }
