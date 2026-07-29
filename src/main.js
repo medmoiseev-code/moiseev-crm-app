@@ -367,7 +367,15 @@ function patientTaskIndicatorsMarkup(tasks) {
 }
 
 function patientStageTaskMarkup(patient) {
-  return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>`
+  const treatments = (patient.treatments || []).filter(item => item.status !== 'completed')
+  if (!treatments.length) return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span><small class="treatment-fallback">Линии лечения не добавлены</small>`
+  const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
+  const rows = treatments.slice(0, 2).map(treatment => {
+    const protectedByTask = activeTasks.some(task => task.treatmentId === treatment.id)
+    const statusIcon = treatment.status === 'waiting' ? '⏳' : '🦷'
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><b>${statusIcon} ${esc(treatment.name)}</b><small>${esc(treatment.stage || 'Этап не указан')}</small>${protectedByTask ? '<i>✓</i>' : '<i>!</i>'}</span>`
+  }).join('')
+  return `<span class="treatment-lines">${rows}${treatments.length > 2 ? `<small class="treatment-more">+ ещё ${treatments.length - 2}</small>` : ''}</span>`
 }
 
 function isValidTime(value) {
@@ -1927,13 +1935,52 @@ function compactPatientTaskMarkup(task) {
   return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time><small>${esc(task.assignee || 'Без ответственного')}</small>${decisionContext}${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">${taskExecutionButton(task)}</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
 }
 
+function patientTreatmentsMarkup(patient) {
+  const treatments = patient.treatments || []
+  if (!treatments.length) return '<div class="compact-empty">Лечения ещё не добавлены</div>'
+  return treatments.map(treatment => {
+    const linked = state.tasks.filter(task => task.patientId === patient.id && task.treatmentId === treatment.id && isTaskActive(task))
+    const status = treatment.status === 'completed' ? 'Завершено' : treatment.status === 'waiting' ? 'Ожидание' : treatment.status === 'paused' ? 'Пауза' : 'В лечении'
+    return `<button type="button" class="treatment-card ${linked.length || ['completed','paused'].includes(treatment.status) ? '' : 'at-risk'}" data-edit-treatment="${treatment.id}"><span><b>🦷 ${esc(treatment.name)}</b><small>${esc(treatment.stage || 'Этап не указан')} · ${status}</small></span><em>${linked.length ? `✓ ${linked.length} ${taskWord(linked.length)}` : ['active','waiting'].includes(treatment.status) ? '⚠ Нет задачи' : 'Изменить'}</em></button>`
+  }).join('')
+}
+
+function openTreatmentModal(patientId, treatmentId = null) {
+  const patient = state.patients.find(item => item.id === patientId)
+  if (!patient) return
+  patient.treatments ||= []
+  const original = patient.treatments.find(item => item.id === treatmentId)
+  const treatment = original ? cloneData(original) : { id:uid(), name:'Терапия', stage:'План лечения', status:'active' }
+  const names = ['Терапия','Хирургия','Имплантация','Ортопедия','Ортодонтия','Проф. гигиена','Другое']
+  document.querySelector('#treatmentModal')?.remove()
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="treatmentModal"><div class="dialog"><div class="dialog-head"><div><h2>${original ? 'Лечение' : 'Новое лечение'} · ${esc(patient.name)}</h2><p>Активное лечение всегда должно иметь следующую задачу</p></div><button class="icon-btn" data-close-treatment>×</button></div><label class="field"><span>Направление</span><select id="treatmentName">${[...new Set([...names,treatment.name])].map(name => `<option ${name === treatment.name ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select></label><label class="field"><span>Текущий этап</span><input id="treatmentStage" value="${esc(treatment.stage || '')}" placeholder="Например: согласование плана"></label><label class="field"><span>Состояние</span><select id="treatmentStatus"><option value="active" ${treatment.status === 'active' ? 'selected' : ''}>В лечении</option><option value="waiting" ${treatment.status === 'waiting' ? 'selected' : ''}>Ожидание</option><option value="paused" ${treatment.status === 'paused' ? 'selected' : ''}>Пауза</option><option value="completed" ${treatment.status === 'completed' ? 'selected' : ''}>Завершено</option></select></label><div class="treatment-control-note">Если у активной линии нет связанной задачи, CRM создаст «Связаться» на завтра, 10:00.</div><div class="dialog-actions"><button class="btn" data-close-treatment>Отмена</button><button class="btn primary" id="saveTreatment">Сохранить</button></div></div></div>`)
+  const modal = document.querySelector('#treatmentModal')
+  modal.querySelectorAll('[data-close-treatment]').forEach(button => button.onclick = () => modal.remove())
+  modal.querySelector('#saveTreatment').onclick = () => {
+    treatment.name = modal.querySelector('#treatmentName').value
+    treatment.stage = modal.querySelector('#treatmentStage').value.trim()
+    treatment.status = modal.querySelector('#treatmentStatus').value
+    treatment.updatedAt = new Date().toISOString()
+    if (!original) { treatment.createdAt = treatment.updatedAt; patient.treatments.push(treatment) }
+    else Object.assign(original, treatment)
+    const activeLinked = state.tasks.filter(task => task.patientId === patient.id && task.treatmentId === treatment.id && isTaskActive(task))
+    if (['active','waiting'].includes(treatment.status) && !activeLinked.length) createWorkflowTask(patient, { type:'contact', title:`📞 Связаться · ${treatment.name}`, dueDate:localDatePlus(1), dueTime:'10:00', comment:`Следующий шаг: ${treatment.stage || treatment.name}`, treatmentId:treatment.id, workflowType:'treatment', workflowId:`treatment:${treatment.id}`, sourceEntityType:'treatment', sourceEntityId:treatment.id, idempotencyKey:`treatment-control:${treatment.id}` }, treatment.updatedAt)
+    if (['completed','paused'].includes(treatment.status)) activeLinked.forEach(task => { task.status = TASK_STATUS_CANCELLED; task.completedAt = treatment.updatedAt; task.completedBy = currentUser.name; task.lastResult = treatment.status === 'completed' ? 'Лечение завершено' : 'Лечение приостановлено' })
+    patient.history ||= []
+    patient.history.unshift(createHistoryEntry('action', `${original ? 'Обновлено' : 'Добавлено'} лечение «${treatment.name}»: ${treatment.stage || 'этап не указан'}.`, { actionIcon:'🦷' }))
+    patient.updatedAt = treatment.updatedAt; patient.updatedBy = currentUser.name
+    saveState(`${original ? 'Обновлено' : 'Добавлено'} лечение: ${patient.name}`)
+    modal.remove(); document.querySelector('#patientModal')?.remove(); openPatientModal(patient.id)
+  }
+}
+
 function openPatientModal(patientId = null, options = {}) {
   const original = state.patients.find(p => p.id === patientId)
   const patient = original ? cloneData(original) : {
     id: uid(), name: '', phones: [''], doctors: ['Моисеев Г.А.'], birthDate: '', appointmentDate: '',
     doctorComment: '', specialNote: '', status: '🆕 Новый', adminNote: '', urgent: false,
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), updatedBy: currentUser.name,
-    history: [], externalId: null,
+    history: [], treatments: [], externalId: null,
   }
   const patientTasks = state.tasks
     .filter(task => task.patientId === patient.id)
@@ -1953,10 +2000,11 @@ function openPatientModal(patientId = null, options = {}) {
         </div>
         <div class="patient-summary-grid">
           <section><label class="field"><span>ФИО</span><input id="pName" value="${esc(patient.name)}" placeholder="Фамилия Имя Отчество"></label><label class="field"><span>Телефон</span><input id="pPhone1" value="${esc(patient.phones?.[0] || '')}"></label><label class="field"><span>Дополнительный телефон</span><input id="pPhone2" value="${esc(patient.phones?.[1] || '')}"></label><div class="patient-birth-field">${manualDateMarkup('pBirth', 'Дата рождения', patient.birthDate || '')}</div><label class="field"><span>Врач</span><select id="pDoctors"><option value="">Не выбран</option>${[...new Set([...DOCTORS, ...(patient.doctors || [])])].filter(Boolean).map(doctor => `<option value="${esc(doctor)}" ${(patient.doctors || [])[0] === doctor ? 'selected' : ''}>${esc(doctor)}</option>`).join('')}</select></label></section>
-          <section><label class="field"><span>Этап пациента</span><input id="pStatus" value="${esc(normalizePatientStatus(patient.status))}" readonly title="Статус изменяется через мастер действий в таблице"></label>${original ? `<div class="patient-summary-item"><span>Ближайшая активная задача</span><b>${nearestTask ? esc(compactTaskLabel(nearestTask)) : '—'}</b><small>${nearestTask ? esc(formatTaskDue(nearestTask)) : 'Нет активных задач'}</small></div>` : ''}<div class="patient-appointment-fields">${manualDateMarkup('pAppointment', 'Дата приёма', patient.appointmentDate || '')}${manualTimeMarkup('pAppointment', 'Время приёма', patient.appointmentAt?.slice(11, 16) || (patient.appointmentDate ? '10:00' : ''))}</div><div class="patient-summary-item"><span>Дата создания пациента</span><b>${formatDate(patient.createdAt)}</b></div></section>
+          <section><label class="field"><span>Общий статус</span><input id="pStatus" value="${esc(normalizePatientStatus(patient.status))}" readonly title="Общий статус; реальные этапы указаны по каждому лечению"></label>${original ? `<div class="patient-summary-item"><span>Ближайшая активная задача</span><b>${nearestTask ? esc(compactTaskLabel(nearestTask)) : '—'}</b><small>${nearestTask ? esc(formatTaskDue(nearestTask)) : 'Нет активных задач'}</small></div>` : ''}<div class="patient-appointment-fields">${manualDateMarkup('pAppointment', 'Дата приёма', patient.appointmentDate || '')}${manualTimeMarkup('pAppointment', 'Время приёма', patient.appointmentAt?.slice(11, 16) || (patient.appointmentDate ? '10:00' : ''))}</div><div class="patient-summary-item"><span>Дата создания пациента</span><b>${formatDate(patient.createdAt)}</b></div></section>
         </div>
         <section class="patient-card-section compact-comment-section"><div class="compact-section-head"><h3>Примечание</h3></div><label class="field" data-admin-editor><textarea id="pNewNote" placeholder="Введите примечание">${esc(patient.adminNote || '')}</textarea></label>${original ? '<button type="button" class="text-action all-comments-link" data-open-comments-history>История примечаний</button>' : ''}</section>
         ${specialNoteCardMarkup(patient, original)}
+        ${original ? `<section class="patient-card-section treatments-section"><div class="compact-section-head"><h3>Лечения · ${(patient.treatments || []).length}</h3><button class="btn" id="addTreatmentBtn">+ Лечение</button></div><div class="treatment-card-list">${patientTreatmentsMarkup(patient)}</div></section>` : ''}
         ${original ? `<section class="patient-card-section active-tasks-section"><div class="compact-section-head"><h3>Активные задачи · ${activePatientTasks.length}</h3><div class="compact-section-actions"><button class="btn ${waitlistEntry ? 'waitlist-active-btn' : ''}" id="addWaitlistBtn">⏳ ${waitlistEntry ? 'В листе ожидания' : 'Лист ожидания'}</button><button class="btn" id="addTaskBtn">+ Задача</button></div></div><div class="compact-task-list">${activePatientTasks.length ? activePatientTasks.slice(0,3).map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Активных задач нет</div>'}</div>${activePatientTasks.length > 3 ? `<details class="more-patient-tasks"><summary>Показать все · ${activePatientTasks.length}</summary><div class="compact-task-list">${activePatientTasks.slice(3).map(compactPatientTaskMarkup).join('')}</div></details>` : ''}</section>` : ''}
         <details class="patient-card-section completed-tasks-section"><summary>Выполненные задачи · ${completedPatientTasks.length}</summary><div class="compact-task-list">${completedPatientTasks.length ? completedPatientTasks.map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Выполненных задач нет</div>'}</div></details>
         <section class="patient-card-section compact-history-section"><div class="compact-section-head"><h3>История · ${patientHistory.length} записей</h3><button type="button" class="text-action" data-open-full-history>Открыть всю историю</button></div><div class="history-list">${patientHistory.length ? patientHistory.slice(0,4).map(item => historyEntryMarkup(item, true)).join('') : '<div class="compact-empty">История пока пустая</div>'}</div></section>
@@ -1975,6 +2023,8 @@ function openPatientModal(patientId = null, options = {}) {
   })
   modal.querySelectorAll('[data-close]').forEach(button => button.onclick = () => modal.remove())
   modal.querySelector('#addTaskBtn')?.addEventListener('click', () => openTaskModal(null, patient.id))
+  modal.querySelector('#addTreatmentBtn')?.addEventListener('click', () => openTreatmentModal(patient.id))
+  modal.querySelectorAll('[data-edit-treatment]').forEach(button => button.onclick = () => openTreatmentModal(patient.id, button.dataset.editTreatment))
   modal.querySelector('#addWaitlistBtn')?.addEventListener('click', () => openWaitlistEntryModal(patient.id, waitlistEntry?.id))
   modal.querySelectorAll('[data-edit-task]').forEach(button => button.onclick = () => openTaskModal(button.dataset.editTask, patient.id))
   modal.querySelectorAll('[data-card-process-task]').forEach(button => button.onclick = () => openTaskExecution(button.dataset.cardProcessTask, { drawerPatientId:patient.id }))
@@ -3787,6 +3837,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       <div class="task-form">
         ${fixedPatient ? `<input type="hidden" id="tPatient" value="${esc(fixedPatient.id)}">` : `<label class="field"><span>Пациент</span><select id="tPatient"><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>`}
         <input type="hidden" id="tType" value="${esc(task.type)}">
+        ${fixedPatient && (fixedPatient.treatments || []).filter(item => ['active','waiting'].includes(item.status)).length ? `<label class="field span-2"><span>Лечение / этап</span><select id="tTreatment"><option value="">Общая задача пациента</option>${fixedPatient.treatments.filter(item => ['active','waiting'].includes(item.status)).map((item,index,array) => `<option value="${item.id}" ${task.treatmentId === item.id || (!original && !task.treatmentId && array.length === 1) ? 'selected' : ''}>${esc(item.name)} · ${esc(item.stage || 'этап не указан')}</option>`).join('')}</select></label>` : '<input type="hidden" id="tTreatment" value="">'}
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field span-2" id="tContactChannelField"><span>Способ связи</span><div class="contact-channel-control"><select class="hidden" id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${(task.contactChannel || 'call') === value ? 'selected' : ''}>${label}</option>`).join('')}</select><div class="contact-channel-options">${CONTACT_CHANNELS.map(([value,label]) => `<button type="button" data-contact-channel="${value}" class="${(task.contactChannel || 'call') === value ? 'active' : ''}">${value === 'max' ? '<i class="max-channel-choice-icon" aria-hidden="true"></i>' : ''}<span>${label}</span></button>`).join('')}</div></div></label>
@@ -3867,6 +3918,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       actionObject:selectedType === 'internal' ? internalObject : null,
       contactRecipient:selectedType === 'contact' ? contactRecipient : null,
       contactChannel:selectedType === 'contact' ? contactChannel : null,
+      treatmentId:modal.querySelector('#tTreatment')?.value || null,
       reminderTarget: selectedType === 'reminder' ? modal.querySelector('#tReminderTarget').value : null,
       title,
       dueDate,

@@ -68,12 +68,14 @@ export function createWorkflowTask(draft, patient, spec, actor = {}) {
   const existing = draft.tasks.find(task => taskActive(task) && task.idempotencyKey === idempotencyKey)
   if (existing) return existing
   const now = actor.now || new Date().toISOString()
+  const inheritedTreatmentId = spec.treatmentId || draft.tasks.find(item => item.id === spec.parentTaskId)?.treatmentId || null
   const task = {
     id:makeId(), patientId:patient.id, type:spec.type, title:spec.title, dueDate:spec.dueDate, dueAt:validation.dueAt,
     assignee:spec.assignee || actor.name || '', note:spec.comment || '', comment:spec.comment || '',
     status:TASK_STATUS_ACTIVE, completedAt:null, createdAt:now, createdBy:actor.name || 'Система',
     workflowId:meta.workflowId, workflowType:meta.workflowType, parentTaskId:spec.parentTaskId || null,
     sourceEntityType:meta.sourceEntityType, sourceEntityId:meta.sourceEntityId, idempotencyKey,
+    treatmentId:inheritedTreatmentId,
     ...(spec.waitlistEntryId ? { waitlistEntryId:spec.waitlistEntryId } : {}),
     ...(spec.appointmentId ? { appointmentId:spec.appointmentId } : {}),
   }
@@ -130,6 +132,7 @@ export function migrateBusinessState(input, actor = {}) {
   // TODO: согласовать отдельные правила миграции удалённых legacy-этапов из старых резервных копий.
   draft.tasks.forEach(task => { if (task.status === 'open') { task.status = TASK_STATUS_ACTIVE; changed = true } })
   for (const patient of draft.patients || []) {
+    if (!Array.isArray(patient.treatments)) { patient.treatments = []; changed = true }
     if (LEGACY_PATIENT_STATUS_MAP.has(patient.status ?? '')) {
       patient.status = LEGACY_PATIENT_STATUS_MAP.get(patient.status ?? '')
       changed = true
@@ -176,6 +179,9 @@ export function validateBusinessState(state, options = {}) {
     if (patient.appointmentDate && !(patient.doctors || []).length) warnings.push({ code:'appointment_without_doctor', patientId:patient.id, message:'Дата приёма без врача' })
     if (patient.status === DO_NOT_CONTACT_STATUS && active.length) errors.push({ code:'dnc_with_tasks', patientId:patient.id, message:'«Не звонить» с активными задачами' })
     if (!KNOWN_PATIENT_STATUSES.has(patient.status)) errors.push({ code:'unknown_patient_status', patientId:patient.id, message:`Неизвестный этап: ${patient.status}` })
+    for (const treatment of (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))) {
+      if (!active.some(task => task.treatmentId === treatment.id)) errors.push({ code:'treatment_without_action', patientId:patient.id, treatmentId:treatment.id, message:`Лечение «${treatment.name || 'Без названия'}» осталось без следующей задачи` })
+    }
     for (const event of (patient.history || []).filter(item => item.actionType === 'decision_not_made')) {
       const continuation = tasks.find(task => task.id === event.createdTaskId && task.patientId === patient.id && task.type === 'decision')
       if (!continuation) errors.push({ code:'decision_result_without_task', patientId:patient.id, taskId:event.taskId, message:'У результата «Решение не принято» отсутствует следующая задача decision' })
@@ -184,6 +190,10 @@ export function validateBusinessState(state, options = {}) {
   }
   for (const task of tasks) {
     if (!patientIds.has(task.patientId)) errors.push({ code:'orphan_task', taskId:task.id, message:'Задача с отсутствующим пациентом' })
+    if (task.treatmentId) {
+      const owner = patients.find(patient => patient.id === task.patientId)
+      if (!owner?.treatments?.some(treatment => treatment.id === task.treatmentId)) errors.push({ code:'orphan_treatment_task', taskId:task.id, patientId:task.patientId, message:'Задача ссылается на отсутствующее лечение' })
+    }
     if (!KNOWN_TASK_TYPES.has(task.type)) warnings.push({ code:'unknown_task_type', taskId:task.id, message:`Неизвестный тип задачи: ${task.type}` })
     if (task.status === 'open') warnings.push({ code:'legacy_open_status', taskId:task.id, message:'Устаревший статус open' })
     if (taskActive(task) && task.dueAt && new Date(task.dueAt).getTime() < (options.now ? new Date(options.now).getTime() : Date.now())) warnings.push({ code:'overdue_task', taskId:task.id, message:'Активная задача просрочена' })
@@ -278,7 +288,7 @@ export function prepareImportedState(data, actor = {}) {
   const candidate = clone({ ...data, waitlist:data.waitlist || [], audit:Array.isArray(data.audit) ? data.audit : [] })
   const migrated = migrateBusinessState(candidate, actor)
   const report = validateBusinessState(migrated.state, { now:actor.now })
-  const criticalCodes = new Set(['duplicate_id','orphan_task','orphan_waitlist','unknown_patient_status','broken_waitlist_task','duplicate_waitlist_task','booked_without_date','dnc_with_tasks','decision_result_without_task','decision_changed_stage','decision_without_assignee','decision_broken_workflow','duplicate_decision','decision_not_future'])
+  const criticalCodes = new Set(['duplicate_id','orphan_task','orphan_waitlist','orphan_treatment_task','treatment_without_action','unknown_patient_status','broken_waitlist_task','duplicate_waitlist_task','booked_without_date','dnc_with_tasks','decision_result_without_task','decision_changed_stage','decision_without_assignee','decision_broken_workflow','duplicate_decision','decision_not_future'])
   const critical = report.errors.filter(item => criticalCodes.has(item.code))
   return { state:migrated.state, report, critical, counts:{ patients:migrated.state.patients.length, tasks:migrated.state.tasks.length, waitlist:migrated.state.waitlist.length }, migrated:migrated.changed }
 }

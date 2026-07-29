@@ -32,6 +32,20 @@ describe('workflow core', () => {
     expect(state.tasks).toHaveLength(1)
   })
 
+  it('keeps treatment relation and detects an active treatment without a task', () => {
+    const state = base({ patients:[patient({ treatments:[{ id:'tr1',name:'Имплантация',stage:'Ожидание КТ',status:'active' }] })], tasks:[] })
+    expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'treatment_without_action')).toBe(true)
+    const created = createWorkflowTask(state,state.patients[0],{ type:'contact',title:'Связаться',dueDate:'2030-01-02',dueTime:'10:00',treatmentId:'tr1' },actor)
+    expect(created.treatmentId).toBe('tr1')
+    expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'treatment_without_action')).toBe(false)
+  })
+
+  it('inherits treatment when creating the next workflow task', () => {
+    const state = base({ patients:[patient({ treatments:[{ id:'tr1',name:'Терапия',status:'active' }] })], tasks:[task({ treatmentId:'tr1' })] })
+    const next = createWorkflowTask(state,state.patients[0],{ type:'contact',title:'Следующий контакт',dueDate:'2030-01-03',dueTime:'10:00',parentTaskId:'t1' },actor)
+    expect(next.treatmentId).toBe('tr1')
+  })
+
   it('rolls back when outcome has no related continuation', () => {
     const state = base()
     expect(() => applyTaskOutcome({ state, taskId:'t1', outcome:'completed', actor, reducer:() => {} })).toThrow(/следующее действие/)
