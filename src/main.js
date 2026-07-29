@@ -328,7 +328,7 @@ function compactTaskDue(task) {
 
 function compactTaskLabel(task) {
   if (task?.type === 'reminder' && task.reminderMethod === 'write') return `➤ ${cleanTaskLabel(task.title || 'Напоминание пациенту')}`
-  const labels = { call:'📞 Позвонить', reminder:'🔔 Напомнить', invite_checkup:'🦷 Профосмотр', appointment:'📅 Записать на приём' }
+  const labels = { call:'📞 Позвонить', reminder:'🔔 Напомнить', invite_checkup:'🦷 Профосмотр', appointment:'📅 Записать на приём', control:'🔎 Уточнить дальнейшее действие' }
   const fallback = labels[task?.type] || TASK_TYPES.find(item => item.value === task?.type)?.label || 'Задача'
   const title = String(task?.title || '').trim()
   if (!title) return fallback
