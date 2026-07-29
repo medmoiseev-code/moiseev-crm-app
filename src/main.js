@@ -27,7 +27,7 @@ const TASK_TYPES = [
   { value: 'appointment', label: '📅 Записать на приём' },
 ]
 
-const CONTACT_REASONS = [['decision','Получить решение по лечению'],['reminder','Напомнить'],['next_stage','Пригласить на следующий этап'],['ready','Сообщить о готовности'],['reschedule','Согласовать или перенести запись'],['wellbeing','Уточнить самочувствие'],['consent','Получить документы, данные или согласие'],['finance','Финансовый вопрос'],['other','Другое']]
+const CONTACT_REASONS = [['decision','🤔 Получить решение по лечению'],['reminder','🔔 Напомнить'],['next_stage','🦷 Пригласить на следующий этап'],['ready','✅ Сообщить о готовности'],['reschedule','📅 Согласовать или перенести запись'],['wellbeing','🩺 Уточнить самочувствие'],['consent','📄 Получить документы, данные или согласие'],['finance','💳 Финансовый вопрос'],['other','💬 Другое']]
 const CONTACT_RECIPIENTS = [['patient','Пациент'],['doctor','Доктор'],['laboratory','Лаборатория'],['other','Другое']]
 const CONTACT_CHANNELS = [['call','Позвонить'],['whatsapp','WhatsApp'],['telegram','Telegram'],['sms','SMS'],['email','Email']]
 const INTERNAL_REASONS = [['check','Проверить'],['prepare','Подготовить'],['transfer','Передать'],['receive','Получить'],['wait','Ожидать результат'],['other','Другое']]
@@ -3759,7 +3759,6 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         <label class="field hidden" id="tInternalReasonField"><span>Что сделать</span><select id="tInternalReason">${INTERNAL_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field hidden" id="tInternalObjectField"><span>По какому вопросу</span><select id="tInternalObject">${INTERNAL_OBJECTS.map(([value,label]) => `<option value="${value}" ${task.actionObject === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
-        <label class="field span-2"><span>Уточнение</span><input id="tTitle" value="${esc(task.title)}" placeholder="Необязательно — короткая деталь действия"></label>
         ${manualDateMarkup('t', 'Дата', task.dueDate)}
         ${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}
         <label class="field span-2"><span>Комментарий</span><textarea id="tNote" placeholder="Детали и договорённости">${esc(task.note || '')}</textarea></label>
@@ -3788,7 +3787,6 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     modal.querySelector('#tContactChannelField').classList.toggle('hidden', !contact)
     modal.querySelector('#tInternalReasonField').classList.toggle('hidden', !internal)
     modal.querySelector('#tInternalObjectField').classList.toggle('hidden', !internal)
-    if (!original) modal.querySelector('#tTitle').value = ''
   }
   updateReminderRecipient()
   modal.querySelectorAll('[data-plus]').forEach(b => b.onclick = () => {
@@ -3799,7 +3797,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   })
   modal.querySelector('#saveTask').onclick = () => {
     const patientId = modal.querySelector('#tPatient').value
-    const detail = modal.querySelector('#tTitle').value.trim()
+    const detail = original && !TASK_TYPES.some(item => item.value === task.type) ? task.title : ''
     if (!patientId) return alert('Выберите пациента')
     const selectedType = modal.querySelector('#tType').value
     const contactReason = modal.querySelector('#tContactReason').value
