@@ -13,6 +13,7 @@ export const KNOWN_PATIENT_STATUSES = new Set([
 ])
 
 export const KNOWN_TASK_TYPES = new Set([
+  'contact', 'internal',
   'call', 'write', 'appointment', 'invite_checkup', 'decision', 'reminder', 'documents',
   'postop_control', 'implant_check', 'request_image', 'waitlist', 'control', 'other',
 ])

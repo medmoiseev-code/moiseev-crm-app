@@ -22,19 +22,16 @@ const STATUS_OPTIONS = [
 ]
 
 const TASK_TYPES = [
-  { value: 'call', label: '📞 Позвонить' },
-  { value: 'write', label: '💬 Написать' },
+  { value: 'contact', label: '📞 Связаться' },
+  { value: 'internal', label: '⚙️ Выполнить / проверить' },
   { value: 'appointment', label: '📅 Записать на приём' },
-  { value: 'invite_checkup', label: '🦷 Пригласить на профосмотр' },
-  { value: 'decision', label: '🤔 Уточнить решение' },
-  { value: 'reminder', label: '🔔 Напомнить' },
-  { value: 'documents', label: '📄 Отправить документы' },
-  { value: 'postop_control', label: '🪡 Контроль после операции' },
-  { value: 'implant_check', label: '🦷 Осмотр импланта' },
-  { value: 'request_image', label: '📷 Запросить снимок' },
-  { value: 'waitlist', label: '⏳ Лист ожидания' },
-  { value: 'other', label: 'Другое' },
 ]
+
+const CONTACT_REASONS = [['decision','Получить решение по лечению'],['reminder','Напомнить'],['next_stage','Пригласить на следующий этап'],['ready','Сообщить о готовности'],['reschedule','Согласовать или перенести запись'],['wellbeing','Уточнить самочувствие'],['consent','Получить документы, данные или согласие'],['finance','Финансовый вопрос'],['other','Другое']]
+const CONTACT_RECIPIENTS = [['patient','Пациент'],['doctor','Доктор'],['laboratory','Лаборатория'],['other','Другое']]
+const CONTACT_CHANNELS = [['call','Позвонить'],['whatsapp','WhatsApp'],['telegram','Telegram'],['sms','SMS'],['email','Email']]
+const INTERNAL_REASONS = [['check','Проверить'],['prepare','Подготовить'],['transfer','Передать'],['receive','Получить'],['wait','Ожидать результат'],['other','Другое']]
+const INTERNAL_OBJECTS = [['ct','КТ или анализы'],['laboratory','Лабораторная работа'],['doctor','Решение врача'],['documents','Документы'],['payment','Оплата'],['approval','Согласование'],['other','Другое']]
 
 const WAITLIST_TREATMENTS = ['Консультация','Имплантация','Удаление','Пластика','Синус-лифтинг','Ортопедия','Гигиена','Другое']
 const WAITLIST_DURATIONS = [30, 60, 90, 120, 180]
@@ -45,11 +42,9 @@ const WAITLIST_PREFERENCES = [
 const WAITLIST_PRIORITIES = [['high','Высокий'],['medium','Средний'],['low','Низкий']]
 
 const PATIENT_ACTIONS = [
-  { value:'call', label:'📞 Позвонить' }, { value:'reminder', label:'🔔 Напомнить' },
-  { value:'decision', label:'🤔 Решение не принято' }, { value:'appointment', label:'📅 Записать на приём' },
-  { value:'treatment_completed', label:'✅ Завершить лечение' },
-  { value:'invite_checkup', label:'🔄 Пригласить на профосмотр' },
-  { value:'refusal', label:'❌ Отказ' }, { value:'do_not_call', label:'🚫 Не звонить' },
+  { value:'contact', label:'📞 Связаться' },
+  { value:'internal', label:'⚙️ Выполнить / проверить' },
+  { value:'appointment', label:'📅 Записать на приём' },
 ]
 
 const REFUSAL_REASONS = [
@@ -121,7 +116,7 @@ function loadTaskFilters() {
     const saved = JSON.parse(localStorage.getItem(TASK_FILTERS_KEY) || '{}')
     const allowed = {
       deadline:['today','tomorrow','upcoming','overdue','all','waitlist'],
-      type:['all','call','reminder','decision','confirmation','message','image','control','checkup','other'],
+      type:['all','contact','internal','confirmation','call','reminder','decision','message','image','control','checkup','other'],
       state:['active','completed','all'],
     }
     return {
@@ -1717,7 +1712,7 @@ function patientRow(patient) {
       <td>${formatDate(patient.appointmentDate)}</td>
       <td>${patientStageTaskMarkup(patient)}</td>
       <td>${taskCell}</td>
-      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" data-patient-action="${action.value}" data-patient-id="${patient.id}">${action.label === '❌ Отказ' ? '❌ Зафиксировать отказ' : action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button><button type="button" data-patient-task-action="write" data-patient-id="${patient.id}">💬 Написать</button><button type="button" data-patient-comment-action="${patient.id}">📝 Добавить комментарий</button><button type="button" data-patient-task-action="other" data-patient-id="${patient.id}">➕ Создать другую задачу</button></div></div></td>
+      <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" ${action.value === 'appointment' ? `data-patient-action="appointment"` : `data-patient-task-action="${action.value}"`} data-patient-id="${patient.id}">${action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
     </tr>
@@ -2365,7 +2360,7 @@ function openTaskDrawer(patientId, showForm = false) {
   document.addEventListener('keydown', handleEscape)
   overlay.querySelector('[data-close-drawer]').onclick = close
   overlay.addEventListener('click', event => { if (event.target === overlay) close() })
-  overlay.querySelector('#drawerAddTask')?.addEventListener('click', () => openTaskDrawer(patientId, true))
+  overlay.querySelector('#drawerAddTask')?.addEventListener('click', () => { overlay.remove(); openTaskModal(null, patientId) })
   overlay.querySelector('#cancelDrawerTask')?.addEventListener('click', () => activeTasks.length ? openTaskDrawer(patientId) : close())
   const drawerType = overlay.querySelector('#drawerTaskType')
   const drawerRecipient = overlay.querySelector('#drawerReminderRecipient')
@@ -2498,7 +2493,7 @@ function renderWaitlist() {
       const secondaryPreference = entry.preferenceText && entry.preferenceText !== primaryPreference ? entry.preferenceText : ''
       const priorityTitle = `${waitlistPriorityLabel(entry.priority)} приоритет`
       const addedTitle = `Добавлен ${formatDate(entry.addedAt)}${entry.addedBy ? ` · ${entry.addedBy}` : ''}`
-      return `<tr data-waitlist-row="${entry.id}" tabindex="0"><td class="waitlist-availability"><b>${esc(primaryPreference)}</b>${secondaryPreference ? `<span>${esc(secondaryPreference)}</span>` : ''}</td><td><div class="waitlist-patient-cell"><i class="waitlist-priority-dot ${entry.priority || 'medium'}" title="${esc(priorityTitle)}" aria-label="${esc(priorityTitle)}"></i><button class="waitlist-patient" data-waitlist-patient="${entry.patientId}"><b>${esc(patient?.name || 'Пациент не найден')}</b><span>${esc(patient?.phones?.[0] || '')}</span></button></div></td><td class="waitlist-treatment"><b>${esc(waitlistTreatmentLabel(entry))}</b><span>${Number(entry.durationMinutes) || 0} минут</span></td><td>${esc(entry.doctor || 'Любой врач')}</td><td>${esc(entry.administrator || entry.addedBy || '—')}</td><td title="${esc(`${entry.comment || 'Без примечания'} · ${addedTitle}`)}"><span class="waitlist-comment">${esc(entry.comment || '—')}</span></td><td><div class="waitlist-action-wrap"><button class="waitlist-action-toggle" data-waitlist-menu-toggle="${entry.id}" aria-label="Действия с записью" aria-expanded="false">•••</button><div class="waitlist-action-menu hidden" data-waitlist-menu="${entry.id}"><button data-waitlist-contact="call" data-patient-id="${entry.patientId}">📞 Позвонить</button><button data-waitlist-contact="write" data-patient-id="${entry.patientId}">💬 Написать</button><button data-waitlist-contact="appointment" data-patient-id="${entry.patientId}">📅 Записать на приём</button><button data-waitlist-contact="task" data-patient-id="${entry.patientId}">➕ Создать задачу</button><button data-edit-waitlist="${entry.id}">✏️ Изменить запись ожидания</button><button class="danger-text" data-remove-waitlist="${entry.id}">🗑 Удалить из листа ожидания</button></div></div></td></tr>`
+      return `<tr data-waitlist-row="${entry.id}" tabindex="0"><td class="waitlist-availability"><b>${esc(primaryPreference)}</b>${secondaryPreference ? `<span>${esc(secondaryPreference)}</span>` : ''}</td><td><div class="waitlist-patient-cell"><i class="waitlist-priority-dot ${entry.priority || 'medium'}" title="${esc(priorityTitle)}" aria-label="${esc(priorityTitle)}"></i><button class="waitlist-patient" data-waitlist-patient="${entry.patientId}"><b>${esc(patient?.name || 'Пациент не найден')} </b><span>${esc(patient?.phones?.[0] || '')}</span></button></div></td><td class="waitlist-treatment"><b>${esc(waitlistTreatmentLabel(entry))}</b><span>${Number(entry.durationMinutes) || 0} минут</span></td><td>${esc(entry.doctor || 'Любой врач')}</td><td>${esc(entry.administrator || entry.addedBy || '—')}</td><td title="${esc(`${entry.comment || 'Без примечания'} · ${addedTitle}`)}"><span class="waitlist-comment">${esc(entry.comment || '—')}</span></td><td><div class="waitlist-action-wrap"><button class="waitlist-action-toggle" data-waitlist-menu-toggle="${entry.id}" aria-label="Действия с записью" aria-expanded="false">•••</button><div class="waitlist-action-menu hidden" data-waitlist-menu="${entry.id}"><button data-waitlist-contact="contact" data-patient-id="${entry.patientId}">📞 Связаться</button><button data-waitlist-contact="internal" data-patient-id="${entry.patientId}">⚙️ Выполнить / проверить</button><button data-waitlist-contact="appointment" data-patient-id="${entry.patientId}">📅 Записать на приём</button><button data-edit-waitlist="${entry.id}">✏️ Изменить запись ожидания</button><button class="danger-text" data-remove-waitlist="${entry.id}">🗑 Удалить из листа ожидания</button></div></div></td></tr>`
     }).join('') : '<tr><td colspan="7" class="empty-row">В листе ожидания нет записей по выбранным условиям</td></tr>'}</tbody></table></div></section>`
   content.querySelector('#newTask').onclick = () => openTaskModal()
   content.querySelector('#addWaitlistEntry').onclick = () => openWaitlistEntryModal()
@@ -2530,8 +2525,7 @@ function renderWaitlist() {
   })
   content.querySelectorAll('[data-waitlist-contact]').forEach(button => button.onclick = event => {
     event.stopPropagation()
-    if (button.dataset.waitlistContact === 'write') openTaskModal(null, button.dataset.patientId, 'write')
-    else if (button.dataset.waitlistContact === 'task') openTaskModal(null, button.dataset.patientId)
+    if (['contact','internal'].includes(button.dataset.waitlistContact)) openTaskModal(null, button.dataset.patientId, button.dataset.waitlistContact)
     else openPatientActionModal(button.dataset.patientId, button.dataset.waitlistContact)
   })
 }
@@ -2800,7 +2794,7 @@ function renderTasks() {
     ${taskNavigationMarkup(activeTaskFilter)}
     <div class="task-extra-filters">
       <label class="task-search-control"><span>Поиск пациента</span><div><input id="taskPatientSearch" value="${esc(taskSearchText)}" placeholder="Поиск по пациенту или телефону"><button type="button" id="clearTaskSearch" class="${taskSearchText ? '' : 'hidden'}" aria-label="Очистить поиск">×</button></div></label>
-      <label><span>Тип задачи</span><select id="taskTypeFilter">${taskFilterOptions([['all','Все типы'],['call','Звонок'],['reminder','Напоминание'],['decision','Уточнить решение'],['confirmation','Подтверждение приёма'],['message','Сообщение'],['image','Запрос снимка'],['control','Послеоперационный контроль'],['checkup','Профосмотр'],['other','Другое']], taskFilters.type)}</select></label>
+      <label><span>Действие</span><select id="taskTypeFilter">${taskFilterOptions([['all','Все действия'],['contact','Связаться'],['internal','Выполнить / проверить'],['confirmation','Запись на приём'],['call','Старые звонки'],['reminder','Старые напоминания'],['decision','Старые решения'],['other','Прочее']], taskFilters.type)}</select></label>
       <label><span>Состояние</span><select id="taskStateFilter">${taskFilterOptions([['active','Активные'],['completed','Выполненные'],['all','Все']], taskFilters.state)}</select></label>
       <button type="button" class="btn all-tasks-filter ${activeTaskFilter === 'all' ? 'active' : ''}" id="showAllTasks">Все задачи</button>
       ${anyFiltersChanged ? '<button type="button" class="btn reset-task-filters" id="resetTaskFilters">Сбросить фильтры</button>' : ''}
@@ -2834,7 +2828,8 @@ function taskFilterOptions(options, selected) {
 
 function taskTypeGroup(task) {
   if (isAppointmentConfirmationTask(task) || task?.type === 'appointment') return 'confirmation'
-  if (task?.type === 'call') return 'call'
+  if (['call','contact'].includes(task?.type)) return 'contact'
+  if (task?.type === 'internal') return 'internal'
   if (task?.type === 'reminder') return 'reminder'
   if (task?.type === 'decision') return 'decision'
   if (task?.type === 'write') return 'message'
@@ -2880,7 +2875,7 @@ function taskExecutionKind(task) {
   if (isAppointmentConfirmationTask(task)) return 'confirmation'
   if (task?.type === 'reminder') return 'reminder'
   const source = `${task?.type || ''} ${cleanTaskLabel(task?.title || '')}`.toLowerCase()
-  if (['call','decision'].includes(task?.type) || /позвон|звонок|уточнить решение/.test(source)) return 'call'
+  if (['call','contact','decision'].includes(task?.type) || /позвон|связаться|звонок|уточнить решение/.test(source)) return 'call'
   if (task?.type === 'write' || /сообщени|написать|whatsapp|telegram/.test(source)) return 'message'
   if (task?.type === 'appointment') return 'appointment'
   if (task?.type === 'invite_checkup') return 'checkup'
@@ -3747,23 +3742,28 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   const original = state.tasks.find(task => task.id === taskId)
   const presetTask = TASK_TYPES.find(item => item.value === presetType)
   const task = original ? cloneData(original) : {
-    id: uid(), patientId: presetPatientId || '', type: presetTask?.value || 'call', title: presetTask?.label || 'Позвонить пациенту',
+    id: uid(), patientId: presetPatientId || '', type: presetTask?.value || 'contact', title: presetTask?.label || 'Связаться',
     dueDate: todayISO(), assignee: currentUser.role === 'admin' ? currentUser.name : 'Елизавета',
     note: '', status: 'active', completedAt: null, createdAt: new Date().toISOString(), createdBy: currentUser.name,
   }
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal" id="taskModal"><div class="dialog task-dialog">
-      <div class="dialog-head"><div><h2>${original ? 'Редактирование задачи' : 'Новая задача'}</h2><p>Отдельная дата, не меняющая другие задачи пациента</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="dialog-head"><div><h2>${original ? 'Редактирование действия' : 'Новое действие'}</h2><p>У каждого незавершённого этапа должен оставаться следующий контроль</p></div><button class="icon-btn" data-close>×</button></div>
       <div class="task-form">
         <label class="field"><span>Пациент</span><select id="tPatient" ${original ? 'disabled title="Для переноса задачи используйте отдельное действие"' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}" ${p.id === task.patientId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
-        <label class="field"><span>Тип</span><select id="tType">${TASK_TYPES.map(t => `<option value="${t.value}" ${t.value === task.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+        <label class="field"><span>Действие</span><select id="tType">${original && !TASK_TYPES.some(item => item.value === task.type) ? `<option value="${esc(task.type)}" selected>${esc(taskTypeDisplay(task))} (старый тип)</option>` : ''}${TASK_TYPES.map(t => `<option value="${t.value}" ${t.value === task.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+        <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <label class="field" id="tContactChannelField"><span>Способ связи</span><select id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${task.contactChannel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <label class="field hidden" id="tInternalReasonField"><span>Что сделать</span><select id="tInternalReason">${INTERNAL_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <label class="field hidden" id="tInternalObjectField"><span>По какому вопросу</span><select id="tInternalObject">${INTERNAL_OBJECTS.map(([value,label]) => `<option value="${value}" ${task.actionObject === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
-        <label class="field span-2"><span>Что нужно сделать</span><input id="tTitle" value="${esc(task.title)}"></label>
+        <label class="field span-2"><span>Уточнение</span><input id="tTitle" value="${esc(task.title)}" placeholder="Необязательно — короткая деталь действия"></label>
         ${manualDateMarkup('t', 'Дата', task.dueDate)}
         ${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}
         <label class="field"><span>Ответственный</span><select id="tAssignee">${USERS.filter(u=>u.role==='admin').map(u => `<option ${u.name === task.assignee ? 'selected' : ''}>${u.name}</option>`).join('')}</select></label>
-        <label class="field span-2"><span>Комментарий</span><textarea id="tNote">${esc(task.note || '')}</textarea></label>
+        <label class="field span-2"><span>Комментарий</span><textarea id="tNote" placeholder="Детали и договорённости">${esc(task.note || '')}</textarea></label>
         <label class="field"><span>Статус</span><input value="${isTaskCompleted(task) ? 'Выполнена' : task.status === 'cancelled' ? 'Отменена' : 'Активна'}" readonly title="Завершить активную задачу можно только через выбор результата"></label>
       </div>
       <div class="quick-dates"><button data-plus="1">Завтра</button><button data-plus="3">Через 3 дня</button><button data-plus="7">Через неделю</button><button data-plus="180">Через полгода</button></div>
@@ -3782,10 +3782,14 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   const reminderRecipient = modal.querySelector('#tReminderRecipient')
   const updateReminderRecipient = () => {
     reminderRecipient.classList.toggle('hidden', taskType.value !== 'reminder')
-    if (!original) {
-      const titleInput = modal.querySelector('#tTitle')
-      titleInput.value = TASK_TYPES.find(item => item.value === taskType.value)?.label || titleInput.value
-    }
+    const contact = taskType.value === 'contact'
+    const internal = taskType.value === 'internal'
+    modal.querySelector('#tContactReasonField').classList.toggle('hidden', !contact)
+    modal.querySelector('#tContactRecipientField').classList.toggle('hidden', !contact)
+    modal.querySelector('#tContactChannelField').classList.toggle('hidden', !contact)
+    modal.querySelector('#tInternalReasonField').classList.toggle('hidden', !internal)
+    modal.querySelector('#tInternalObjectField').classList.toggle('hidden', !internal)
+    if (!original) modal.querySelector('#tTitle').value = ''
   }
   taskType.addEventListener('change', updateReminderRecipient)
   updateReminderRecipient()
@@ -3797,9 +3801,21 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   })
   modal.querySelector('#saveTask').onclick = () => {
     const patientId = modal.querySelector('#tPatient').value
-    const title = modal.querySelector('#tTitle').value.trim()
+    const detail = modal.querySelector('#tTitle').value.trim()
     if (!patientId) return alert('Выберите пациента')
-    if (!title) return alert('Укажите, что нужно сделать')
+    const selectedType = modal.querySelector('#tType').value
+    const contactReason = modal.querySelector('#tContactReason').value
+    const contactRecipient = modal.querySelector('#tContactRecipient').value
+    const contactChannel = modal.querySelector('#tContactChannel').value
+    const internalReason = modal.querySelector('#tInternalReason').value
+    const internalObject = modal.querySelector('#tInternalObject').value
+    const labelOf = (items, value) => items.find(([key]) => key === value)?.[1] || ''
+    const generatedTitle = original && !TASK_TYPES.some(item => item.value === selectedType) ? '' : selectedType === 'contact'
+      ? `Связаться · ${labelOf(CONTACT_REASONS, contactReason)}`
+      : selectedType === 'internal'
+        ? `${labelOf(INTERNAL_REASONS, internalReason)} · ${labelOf(INTERNAL_OBJECTS, internalObject)}`
+        : TASK_TYPES.find(item => item.value === selectedType)?.label || 'Действие'
+    const title = generatedTitle && detail && !detail.includes(generatedTitle) ? `${generatedTitle} · ${detail}` : (detail || generatedTitle)
     const dueDate = readManualDate(modal, 't')
     const dueTime = readManualTime(modal, 't')
     if (!dueDate || !dueTime) return
@@ -3811,8 +3827,12 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     const status = original ? task.status : 'active'
     Object.assign(task, {
       patientId,
-      type: modal.querySelector('#tType').value,
-      reminderTarget: modal.querySelector('#tType').value === 'reminder' ? modal.querySelector('#tReminderTarget').value : null,
+      type: selectedType,
+      actionReason:selectedType === 'contact' ? contactReason : selectedType === 'internal' ? internalReason : null,
+      actionObject:selectedType === 'internal' ? internalObject : null,
+      contactRecipient:selectedType === 'contact' ? contactRecipient : null,
+      contactChannel:selectedType === 'contact' ? contactChannel : null,
+      reminderTarget: selectedType === 'reminder' ? modal.querySelector('#tReminderTarget').value : null,
       title,
       dueDate,
       dueAt: `${dueDate}T${dueTime}:00`,
