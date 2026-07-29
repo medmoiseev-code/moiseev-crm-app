@@ -3746,12 +3746,14 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     dueDate: todayISO(), assignee: currentUser.role === 'admin' ? currentUser.name : 'Елизавета',
     note: '', status: 'active', completedAt: null, createdAt: new Date().toISOString(), createdBy: currentUser.name,
   }
+  const fixedPatient = state.patients.find(patient => patient.id === task.patientId)
+  const actionHeading = original ? 'Редактирование действия' : TASK_TYPES.find(item => item.value === task.type)?.label || 'Новое действие'
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="modal" id="taskModal"><div class="dialog task-dialog">
-      <div class="dialog-head"><div><h2>${original ? 'Редактирование действия' : esc(TASK_TYPES.find(item => item.value === task.type)?.label || 'Новое действие')}</h2><p>У каждого незавершённого этапа должен оставаться следующий контроль</p></div><button class="icon-btn" data-close>×</button></div>
+      <div class="dialog-head"><div><h2>${esc(actionHeading)}${fixedPatient ? ` · ${esc(fixedPatient.name)}` : ''}</h2><p>У каждого незавершённого этапа должен оставаться следующий контроль</p></div><button class="icon-btn" data-close>×</button></div>
       <div class="task-form">
-        <label class="field"><span>Пациент</span><select id="tPatient" ${original ? 'disabled title="Для переноса задачи используйте отдельное действие"' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}" ${p.id === task.patientId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+        ${fixedPatient ? `<input type="hidden" id="tPatient" value="${esc(fixedPatient.id)}">` : `<label class="field"><span>Пациент</span><select id="tPatient"><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>`}
         <input type="hidden" id="tType" value="${esc(task.type)}">
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
