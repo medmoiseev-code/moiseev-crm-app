@@ -28,7 +28,7 @@ const TASK_TYPES = [
 ]
 
 const CONTACT_REASONS = [['decision','🤔 Получить решение по лечению'],['reminder','🔔 Напомнить'],['next_stage','🦷 Пригласить на следующий этап'],['ready','✅ Сообщить о готовности'],['reschedule','📅 Согласовать или перенести запись'],['wellbeing','🩺 Уточнить самочувствие'],['consent','📄 Получить документы, данные или согласие'],['finance','💳 Финансовый вопрос'],['other','💬 Другое']]
-const CONTACT_RECIPIENTS = [['patient','Пациент'],['doctor','Доктор'],['laboratory','Лаборатория'],['other','Другое']]
+const CONTACT_RECIPIENTS = [['patient','👤 Пациент'],['doctor','👨‍⚕️ Доктор'],['laboratory','🧪 Лаборатория'],['other','💬 Другое']]
 const CONTACT_CHANNELS = [['call','📞 Позвонить'],['whatsapp','🟢 WhatsApp'],['telegram','➤ Telegram'],['max','🟣◉ MAX'],['sms','💬 SMS'],['email','📧 Email']]
 const INTERNAL_REASONS = [['check','Проверить'],['prepare','Подготовить'],['transfer','Передать'],['receive','Получить'],['wait','Ожидать результат'],['other','Другое']]
 const INTERNAL_OBJECTS = [['ct','КТ или анализы'],['laboratory','Лабораторная работа'],['doctor','Решение врача'],['documents','Документы'],['payment','Оплата'],['approval','Согласование'],['other','Другое']]
