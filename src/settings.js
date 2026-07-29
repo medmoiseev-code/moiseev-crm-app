@@ -1,5 +1,8 @@
+import { storageKey } from './storage.js'
+
 export const USER_SETTINGS_VERSION = 1
-export const SYSTEM_SETTINGS_KEY = 'crm:systemSettings'
+export const SYSTEM_SETTINGS_KEY = storageKey('crm:systemSettings')
+const userSettingsKey = userId => storageKey(`crm:userSettings:${userId}`)
 
 export const THEMES = {
   moiseev: { name: 'Moiseev Default', bg:'#0b0f16', surface:'#131a24', secondary:'#0f151e', border:'#273142', text:'#e7edf7', muted:'#8f9db3', primary:'#6c8cff', hover:'#86a0ff', success:'#46d39a', warning:'#f2b84b', danger:'#ff6673', rowHover:'#172131', selected:'#1b2742' },
@@ -31,17 +34,24 @@ function merge(base, saved) {
   return output
 }
 
+function withoutRemovedPatientStages(settings) {
+  return {
+    ...settings,
+    patientStatuses:(settings.patientStatuses || []).filter(value => !/^\s*(?:🤔\s*)?(?:думает|ожидает решения|на паузе|в раздумьях)\s*$/iu.test(String(value))),
+  }
+}
+
 export function loadUserSettings(userId) {
   try {
-    const saved = JSON.parse(localStorage.getItem(`crm:userSettings:${userId}`) || 'null')
+    const saved = JSON.parse(localStorage.getItem(userSettingsKey(userId)) || 'null')
     const settings = merge(defaultUserSettings(), saved)
     if (!saved) settings.appearance.theme = loadSystemSettings().defaultTheme || 'moiseev'
     return settings
   } catch { return defaultUserSettings() }
 }
-export function saveUserSettings(userId, settings) { localStorage.setItem(`crm:userSettings:${userId}`, JSON.stringify({ ...settings, version:USER_SETTINGS_VERSION })) }
-export function loadSystemSettings() { try { return merge(defaultSystemSettings(), JSON.parse(localStorage.getItem(SYSTEM_SETTINGS_KEY) || 'null')) } catch { return defaultSystemSettings() } }
-export function saveSystemSettings(settings) { localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify({ ...settings, version:1 })) }
+export function saveUserSettings(userId, settings) { localStorage.setItem(userSettingsKey(userId), JSON.stringify({ ...settings, version:USER_SETTINGS_VERSION })) }
+export function loadSystemSettings() { try { return withoutRemovedPatientStages(merge(defaultSystemSettings(), JSON.parse(localStorage.getItem(SYSTEM_SETTINGS_KEY) || 'null'))) } catch { return defaultSystemSettings() } }
+export function saveSystemSettings(settings) { localStorage.setItem(SYSTEM_SETTINGS_KEY, JSON.stringify({ ...withoutRemovedPatientStages(settings), version:1 })) }
 
 export function applyUserSettings(settings) {
   const theme = THEMES[settings?.appearance?.theme] || THEMES.moiseev

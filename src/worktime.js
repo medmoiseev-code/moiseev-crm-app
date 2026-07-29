@@ -1,4 +1,6 @@
-const CACHE_KEY = 'moiseev_worktime_offline_v01'
+import { storageKey } from './storage.js'
+
+const CACHE_KEY = storageKey('moiseev_worktime_offline_v01')
 const apiUrl = import.meta.env.VITE_SUPABASE_URL || ''
 const apiKey = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
 
@@ -148,8 +150,9 @@ function fromShiftRow(row) { return { id:row.id,userId:row.user_id,userName:row.
 function fromRequestRow(row) { return { id:row.id,shiftId:row.shift_id,requestedEndAt:row.requested_end_at,reason:row.reason,requestedBy:row.requested_by,requestedAt:row.requested_at,status:row.status,reviewedBy:row.reviewed_by,reviewedAt:row.reviewed_at,syncStatus:'synchronized' } }
 function mergeById(serverItems, pendingItems) { const map = new Map(serverItems.map(item => [item.id, item])); pendingItems.forEach(item => map.set(item.id, item)); return [...map.values()] }
 function getDeviceId() {
-  let id = localStorage.getItem('moiseev_device_id')
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem('moiseev_device_id', id) }
+  const deviceKey = storageKey('moiseev_device_id')
+  let id = localStorage.getItem(deviceKey)
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem(deviceKey, id) }
   return id
 }
 

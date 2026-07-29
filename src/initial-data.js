@@ -1,4 +1,4 @@
-import sourceData from '../patients_moiseev_import (1).json'
+import sourceData from '../patients_moiseev_import (1).json' with { type:'json' }
 
 const DOCTOR_NAMES = new Set(['Моисеев Г.А', 'Моисеев Г.А.', 'Климов Ф.С', 'Климов Ф.С.'])
 
@@ -82,7 +82,7 @@ export function createInitialState() {
 
   const waitlistPatients = WAITLIST_DEMO.map((item, index) => ({
     id:`waitlist-patient-${index + 1}`, name:item[0], phones:[item[1]], doctors:item[4] ? [item[4]] : [], birthDate:'', appointmentDate:'', appointmentAt:null,
-    doctorComment:'', specialNote:'', status:'🤔 Думает', adminNote:item[9], urgent:false,
+    doctorComment:'', specialNote:'', status:'🆕 Новый', adminNote:item[9], urgent:false,
     createdAt:`2026-07-${String(15 + index).padStart(2,'0')}T10:00:00`, updatedAt:`2026-07-${String(15 + index).padStart(2,'0')}T10:00:00`, updatedBy:item[5], externalId:null, history:[],
   }))
   patients.push(...waitlistPatients)

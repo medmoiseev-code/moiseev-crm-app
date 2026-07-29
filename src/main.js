@@ -1,6 +1,8 @@
 import { createInitialState } from './initial-data.js'
 import { worktime, worktimeCloudEnabled, activeShift, startShift, endShift, durationMinutes, durationSeconds, requestCorrection, reviewCorrection, setHourlyRate, syncWorktime, refreshWorktime } from './worktime.js'
 import { THEMES, defaultUserSettings, loadUserSettings, saveUserSettings, loadSystemSettings, saveSystemSettings, applyUserSettings } from './settings.js'
+import { TASK_STATUS_ACTIVE, TASK_STATUS_COMPLETED, TASK_STATUS_CANCELLED, applyDecisionOutcome as applyDecisionOutcomeCore, createWorkflowTask as createWorkflowTaskCore, ensureWaitlistTask as ensureWaitlistTaskCore, finalizePatientAsDoNotContact as finalizePatientAsDoNotContactCore, migrateBusinessState, prepareImportedState, validateBusinessState, validateFutureDateTime } from './workflow.js'
+import { QA_MODE, storageKey } from './storage.js'
 
 const USERS = [
   { id: 'elizaveta', name: 'Елизавета', role: 'admin' },
@@ -11,7 +13,6 @@ const USERS = [
 
 const STATUS_OPTIONS = [
   '🆕 Новый',
-  '🤔 Думает',
   '📅 Записан на приём',
   '🦷 На лечении',
   '✅ Лечение завершено',
@@ -25,7 +26,7 @@ const TASK_TYPES = [
   { value: 'write', label: '💬 Написать' },
   { value: 'appointment', label: '📅 Записать на приём' },
   { value: 'invite_checkup', label: '🦷 Пригласить на профосмотр' },
-  { value: 'decision', label: '⏳ Уточнить решение' },
+  { value: 'decision', label: '🤔 Уточнить решение' },
   { value: 'reminder', label: '🔔 Напомнить' },
   { value: 'documents', label: '📄 Отправить документы' },
   { value: 'postop_control', label: '🪡 Контроль после операции' },
@@ -45,7 +46,7 @@ const WAITLIST_PRIORITIES = [['high','Высокий'],['medium','Средний
 
 const PATIENT_ACTIONS = [
   { value:'call', label:'📞 Позвонить' }, { value:'reminder', label:'🔔 Напомнить' },
-  { value:'thinking', label:'🤔 Пациент думает' }, { value:'appointment', label:'📅 Записать на приём' },
+  { value:'decision', label:'🤔 Решение не принято' }, { value:'appointment', label:'📅 Записать на приём' },
   { value:'treatment_completed', label:'✅ Завершить лечение' },
   { value:'invite_checkup', label:'🔄 Пригласить на профосмотр' },
   { value:'refusal', label:'❌ Отказ' }, { value:'do_not_call', label:'🚫 Не звонить' },
@@ -55,7 +56,6 @@ const REFUSAL_REASONS = [
   { value:'expensive', label:'Дорого', option:'💰 Дорого' },
   { value:'other_clinic', label:'Лечится в другой клинике', option:'🏥 Лечится в другой клинике' },
   { value:'other_doctor', label:'Выбрал другого врача', option:'👨‍⚕️ Выбрал другого врача' },
-  { value:'thinking', label:'Решил пока подумать', option:'🤔 Решил пока подумать' },
   { value:'no_finances', label:'Нет финансовой возможности', option:'💳 Нет финансовой возможности' },
   { value:'fear', label:'Боится лечения / операции', option:'😨 Боится лечения / операции' },
   { value:'no_time', label:'Нет времени сейчас', option:'📅 Нет времени сейчас' },
@@ -63,10 +63,14 @@ const REFUSAL_REASONS = [
   { value:'lost_contact', label:'Перестал выходить на связь', option:'📞 Перестал выходить на связь' },
   { value:'other', label:'Другая причина', option:'❓ Другая причина' },
 ]
+const DECISION_REASONS = [
+  ['cost','Обдумывает стоимость'], ['family','Обсуждает с родственниками'], ['timing','Не определился со сроками'],
+  ['second_opinion','Хочет проконсультироваться с другим врачом'], ['fear','Боится лечения или операции'],
+  ['plan','Ждёт план лечения или расчёт'], ['opportunity','Ждёт зарплату, отпуск или другую возможность'],
+  ['questions','Остались вопросы'], ['other','Другое'],
+]
 
 const DOCTORS = ['Моисеев Г.А.', 'Климов Ф.С.']
-const QA_MODE = new URLSearchParams(location.search).get('qa') === '1'
-const storageKey = key => QA_MODE ? `${key}_qa` : key
 const STORAGE_KEY = storageKey('moiseev_admin_crm_v06')
 const SNAPSHOT_KEY = storageKey('moiseev_admin_crm_snapshots_v04')
 const SESSION_KEY = storageKey('moiseev_admin_crm_user')
@@ -167,8 +171,11 @@ function loadState() {
         audit: Array.isArray(saved.audit) ? saved.audit : [],
       }
       loaded.patients.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
-      if (migrateLegacyPatientDates(loaded)) localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded))
-      return loaded
+      const legacyChanged = migrateLegacyPatientDates(loaded)
+      const migrated = migrateBusinessState(loaded, { name:'Система' })
+      migrated.state.patients.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
+      if (legacyChanged || migrated.changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated.state))
+      return migrated.state
     }
     if (Array.isArray(saved?.patients) && saved.patients.length === 0) {
       const initialState = normalizedInitialState()
@@ -212,15 +219,15 @@ function normalizedInitialState() {
   initialState.waitlist = Array.isArray(initialState.waitlist) ? initialState.waitlist : []
   initialState.patients?.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
   initialState.tasks?.forEach(task => { if (task.dueDate && !task.dueAt) task.dueAt = `${task.dueDate}T10:00:00` })
-  return initialState
+  return migrateBusinessState(initialState, { name:'Система' }).state
 }
 
 function normalizePatientStatus(status) {
   const map = {
-    '': '🆕 Новый', '📞 Позвонить': '🤔 Думает', '🔔 Напомнить': '🤔 Думает',
+    '': '🆕 Новый', '📞 Позвонить': '🆕 Новый', '🔔 Напомнить': '🆕 Новый',
     '✍️ Записали на приём': '📅 Записан на приём', '🩺 Профосмотр': '🔄 Профосмотр',
-    '⛔ Не звонить': '🚫 Не звонить', 'Позвонить': '🤔 Думает', '🤔 Думает / принимает решение': '🤔 Думает',
-    'Напомнить': '🤔 Думает', 'Пригласить на профосмотр': '🔄 Профосмотр',
+    '⛔ Не звонить': '🚫 Не звонить', 'Позвонить': '🆕 Новый',
+    'Напомнить': '🆕 Новый', 'Пригласить на профосмотр': '🔄 Профосмотр',
     '🦷 Лечится': '🦷 На лечении', 'Лечится': '🦷 На лечении', 'Начато лечение': '🦷 На лечении',
   }
   return map[status ?? ''] || (STATUS_OPTIONS.includes(status) ? status : '🆕 Новый')
@@ -250,11 +257,11 @@ function matchesDateFilter(value, filter) {
 }
 
 function isTaskActive(task) {
-  return task?.status === 'active' || task?.status === 'open'
+  return task?.status === TASK_STATUS_ACTIVE || task?.status === 'open'
 }
 
 function isTaskCompleted(task) {
-  return task?.status === 'completed' || task?.status === 'done'
+  return task?.status === TASK_STATUS_COMPLETED || task?.status === 'done'
 }
 
 function isTaskOverdue(task) {
@@ -339,7 +346,7 @@ function taskIndicatorIcon(task) {
   if (task?.type === 'reminder' && task.reminderTarget === 'doctor') return '👨‍⚕️'
   const icons = {
     call:'📞', write:'💬', message:'💬', reminder:'🔔', appointment:'📅', confirmation:'📅',
-    invite_checkup:'🦷', decision:'⏳', documents:'📄', postop_control:'🪡',
+    invite_checkup:'🦷', decision:'🤔', documents:'📄', postop_control:'🪡',
     implant_check:'🦷', request_image:'📷', other:'•',
   }
   if (icons[task?.type]) return icons[task.type]
@@ -480,7 +487,9 @@ function appointmentConfirmationDeadline(appointmentDate) {
   const today = todayISO()
   const dueDate = candidate < today ? today : candidate
   const defaultDueAt = `${dueDate}T10:00:00`
-  return { dueDate, dueAt: new Date(defaultDueAt) <= new Date() ? localDateTimeValue(new Date()) : defaultDueAt }
+  if (new Date(defaultDueAt) > new Date()) return { dueDate, dueAt:defaultDueAt }
+  const nearest = new Date(Date.now() + 5 * 60000)
+  return { dueDate:localDateTimeValue(nearest).slice(0,10), dueAt:localDateTimeValue(nearest) }
 }
 
 function createHistoryEntry(actionType, text, details = {}) {
@@ -648,6 +657,7 @@ function renderShell() {
         </nav>
         <span class="demo-version-badge">${QA_MODE ? 'QA · безопасные тестовые данные' : 'Демонстрационная версия'}</span>
         <div class="top-actions">
+          ${QA_MODE ? '<button class="btn qa-validation-button" id="openBusinessValidation">Проверка бизнес-логики</button>' : ''}
           <button class="btn" id="undoBtn" title="Вернуть состояние до последнего сохранения">↶ Отменить</button>
           <button class="btn" id="backupBtn">Скачать бэкап</button>
           <button class="btn" id="restoreBtn">Восстановить</button>
@@ -667,6 +677,7 @@ function renderShell() {
   document.querySelector('#backupBtn').onclick = exportBackup
   document.querySelector('#restoreBtn').onclick = () => document.querySelector('#restoreFile').click()
   document.querySelector('#restoreFile').onchange = importBackup
+  document.querySelector('#openBusinessValidation')?.addEventListener('click', openBusinessValidationModal)
   document.querySelectorAll('[data-tab]').forEach(button => {
     button.onclick = () => {
       activeTab = button.dataset.tab
@@ -679,6 +690,18 @@ function renderShell() {
   if (activeTab === 'analytics') renderAnalytics()
   if (activeTab === 'worktime') renderWorktime()
   if (activeTab === 'settings') renderSettings()
+}
+
+function openBusinessValidationModal() {
+  const report = validateBusinessState(state)
+  document.querySelector('#businessValidationModal')?.remove()
+  const rows = [...report.errors.map(item => ({...item,severity:'Ошибка'})), ...report.warnings.map(item => ({...item,severity:'Предупреждение'}))]
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="businessValidationModal"><div class="dialog business-validation-dialog"><div class="dialog-head"><div><h2>Проверка бизнес-логики</h2><p>Ошибок: ${report.errors.length} · предупреждений: ${report.warnings.length}</p></div><button class="icon-btn" data-close-validation>×</button></div><div class="business-validation-list">${rows.length ? rows.map(item => `<article class="validation-row ${item.severity === 'Ошибка' ? 'error' : 'warning'}"><b>${item.severity} · ${esc(item.code)}</b><span>${esc(item.message)}</span>${item.patientId ? `<button class="btn" data-validation-patient="${esc(item.patientId)}">Открыть пациента</button>` : item.taskId ? `<button class="btn" data-validation-task="${esc(item.taskId)}">Открыть задачу</button>` : ''}</article>`).join('') : '<div class="empty-box">Нарушений не найдено</div>'}</div><div class="dialog-actions"><span></span><button class="btn" data-close-validation>Закрыть</button></div></div></div>`)
+  const modal = document.querySelector('#businessValidationModal')
+  modal.querySelectorAll('[data-close-validation]').forEach(button => button.onclick = () => modal.remove())
+  closeOnBackdropClick(modal, () => modal.remove())
+  modal.querySelectorAll('[data-validation-patient]').forEach(button => button.onclick = () => { modal.remove(); openPatientModal(button.dataset.validationPatient) })
+  modal.querySelectorAll('[data-validation-task]').forEach(button => button.onclick = () => { modal.remove(); openTaskModal(button.dataset.validationTask) })
 }
 
 function userWorkBlockMarkup() {
@@ -910,7 +933,7 @@ function sortedHistory(history = []) {
 }
 
 function historyType(item) {
-  const knownTypes = ['admin_comment', 'doctor_comment', 'special_note', 'status', 'action', 'task', 'task_completed', 'task_processed', 'import', 'system', 'comment']
+  const knownTypes = ['admin_comment', 'doctor_comment', 'special_note', 'status', 'action', 'task', 'task_completed', 'task_processed', 'decision_not_made', 'import', 'system', 'comment']
   if (knownTypes.includes(item?.actionType)) return item.actionType
   if (knownTypes.includes(item?.type)) return item.type
   const text = String(item?.text || '')
@@ -938,6 +961,7 @@ function normalizeHistoryText(text, type) {
 
 function historyActionIcon(item, type, text) {
   if (item?.actionIcon) return item.actionIcon
+  if (item?.actionType === 'decision_not_made' || item?.taskType === 'decision') return '🤔'
   if (type === 'special_note') return '🚨'
   if (type === 'task_completed' || /выполнена\s+задача/i.test(String(item?.text || '')) || item?.taskStatus === 'completed') return '✅'
   const source = `${item?.taskType || ''} ${item?.title || ''} ${text}`.toLowerCase()
@@ -956,7 +980,7 @@ function historyTypeLabel(type) {
     admin_comment: 'Примечание', doctor_comment: 'Комментарий врача',
     special_note: 'Особое примечание',
     status: 'Смена статуса', task: 'Задача', task_processed: 'Обработка задачи', import: 'Импортированная запись',
-    system: 'Системная запись', comment: 'Комментарий',
+    system: 'Системная запись', decision_not_made:'Решение не принято', comment: 'Комментарий',
   })[type] || 'Событие'
 }
 
@@ -1893,7 +1917,8 @@ function updateSpecialNote(patient, nextValue) {
 function compactPatientTaskMarkup(task) {
   const overdue = isTaskOverdue(task)
   const comment = String(task.comment || task.note || '').trim()
-  return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time>${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">${taskExecutionButton(task)}</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
+  const decisionContext = task.type === 'decision' ? `<p class="decision-task-context">${task.decisionSubject ? `Вопрос: ${esc(task.decisionSubject)}.` : ''}${task.decisionReason ? ` Причина: ${esc(task.decisionReason)}.` : ''}${task.lastPatientPromise ? ` Обещание: ${esc(task.lastPatientPromise)}.` : ''}${task.lastContactAt ? ` Последний контакт: ${esc(formatDateTime(task.lastContactAt))}.` : ''}</p>` : ''
+  return `<article class="compact-patient-task ${overdue ? 'overdue' : ''}"><div class="compact-task-main"><strong>${esc(compactTaskLabel(task))}</strong><time>${esc(formatTaskDue(task))}</time><small>${esc(task.assignee || 'Без ответственного')}</small>${decisionContext}${comment ? `<p>${esc(comment)}</p>` : ''}</div><div class="compact-task-actions">${isTaskActive(task) ? `<button type="button" class="btn primary" data-card-process-task="${task.id}">${taskExecutionButton(task)}</button>` : ''}<button type="button" class="btn" data-edit-task="${task.id}">Изменить</button></div></article>`
 }
 
 function openPatientModal(patientId = null, options = {}) {
@@ -1980,7 +2005,13 @@ function openPatientModal(patientId = null, options = {}) {
     if (birthDate === null) return
     const appointmentTime = appointmentDate ? readManualTime(modal, 'pAppointment') : readManualTime(modal, 'pAppointment', false)
     if (appointmentTime === null) return
+    const appointmentCleared = Boolean(original?.appointmentDate) && !appointmentDate
     const appointmentChanged = Boolean(appointmentDate) && (!original || original.appointmentDate !== appointmentDate || (original.appointmentAt?.slice(11, 16) || '') !== appointmentTime)
+    let appointmentClearReason = ''
+    if (appointmentCleared) {
+      appointmentClearReason = prompt('Дата приёма очищается. Укажите причину отмены и дальнейшего контакта:')?.trim() || ''
+      if (!appointmentClearReason) return alert('Нельзя удалить дату приёма без причины и следующего действия')
+    }
     const previousData = original ? JSON.stringify({ name: patient.name, phones: patient.phones, doctors: patient.doctors, birthDate:patient.birthDate, appointmentDate: patient.appointmentDate, status: patient.status }) : null
     patient.name = name
     patient.phones = [phone1, modal.querySelector('#pPhone2').value.trim()].filter(Boolean)
@@ -1989,6 +2020,7 @@ function openPatientModal(patientId = null, options = {}) {
     patient.appointmentDate = appointmentDate
     patient.appointmentAt = appointmentDate ? `${appointmentDate}T${appointmentTime}:00` : null
     patient.status = modal.querySelector('#pStatus').value
+    if (appointmentCleared) patient.status = '🆕 Новый'
     patient.updatedAt = new Date().toISOString()
     patient.updatedBy = currentUser.name
     patient.history ||= []
@@ -2022,10 +2054,16 @@ function openPatientModal(patientId = null, options = {}) {
         existingConfirmation.updatedAt = patient.updatedAt
         existingConfirmation.updatedBy = currentUser.name
       } else {
-        const confirmationTask = createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}` }, patient.updatedAt)
+        patient.appointmentId ||= uid()
+        const confirmationTask = createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, patient.updatedAt)
         confirmationTask.confirmationAppointmentDate = appointmentDate
         patient.history.unshift(createHistoryEntry('task', `Создана задача подтверждения записи на ${formatDate(deadline.dueDate)}.`, { actionIcon:'📞', taskType:'call' }))
       }
+    }
+    if (appointmentCleared) {
+      completePatientTasks(patient.id, task => isAppointmentConfirmationTask(task), patient.updatedAt, 'Запись отменена в карточке пациента')
+      createWorkflowTask(patient, { type:'call', title:'📞 Связаться после отмены записи', dueDate:localDatePlus(1), dueTime:'10:00', comment:appointmentClearReason, workflowType:'appointment-cancel', workflowId:`appointment-cancel:${patient.id}:${patient.updatedAt}`, parentTaskId:`appointment-clear:${patient.id}`, sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`appointment-clear:${patient.id}:${patient.updatedAt}` }, patient.updatedAt)
+      patient.history.unshift(createHistoryEntry('action', `Запись отменена. ${appointmentClearReason}. Создана задача связи с пациентом.`, { actionIcon:'📅', taskType:'call' }))
     }
     saveState(original ? `Изменена карточка: ${patient.name}` : `Создан пациент: ${patient.name}`)
     modal.remove()
@@ -2104,7 +2142,7 @@ function openUniversalReminderModal(patient) {
     if (!comment) { modal.querySelector('#universalReminderCommentError').textContent = 'Комментарий обязателен'; return }
     const title = target === 'doctor' ? '👨‍⚕️ Напоминание доктору' : method === 'write' ? '➤ Напоминание пациенту' : '📞 Напоминание пациенту'
     const now = new Date().toISOString()
-    const task = createActionTask(patient, { type:'reminder', title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment, reminderTarget:target }, now)
+    const task = createWorkflowTask(patient, { type:'reminder', title, dueDate, dueTime, comment, reminderTarget:target, workflowType:'reminder', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`reminder:${patient.id}:${dueDate}T${dueTime}:${target}` }, now)
     task.reminderMethod = method
     patient.updatedAt = now
     patient.updatedBy = currentUser.name
@@ -2123,20 +2161,22 @@ function openPatientActionModal(patientId, action) {
   const definition = PATIENT_ACTIONS.find(item => item.value === action)
   if (!patient || !definition) return
   if (action === 'reminder') return openUniversalReminderModal(patient)
-  const needsDate = ['call','reminder','thinking','invite_checkup','appointment'].includes(action)
+  const needsDate = ['call','reminder','decision','invite_checkup','appointment'].includes(action)
   const needsTime = needsDate
-  const needsDoctor = action === 'appointment'
+  const needsDoctor = ['appointment','decision'].includes(action)
   const completedTreatment = action === 'treatment_completed'
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="patientActionModal"><div class="dialog patient-action-dialog" role="dialog" aria-modal="true" aria-labelledby="patientActionTitle">
     <div class="dialog-head"><div><h2 id="patientActionTitle">${esc(definition.label)}</h2><p>${esc(patient.name)} · текущий статус: ${esc(normalizePatientStatus(patient.status))}</p></div><button class="icon-btn" data-close-action>×</button></div>
     <div class="patient-action-form">
-      ${needsDate ? manualDateMarkup('action', action === 'appointment' ? 'Дата приёма' : action === 'thinking' ? 'Дата следующего звонка' : 'Дата задачи', action === 'invite_checkup' ? dateAfterMonths(6) : localDatePlus(1)) : ''}
+      ${action === 'decision' ? `<label class="field span-2"><span>По какому вопросу пациент принимает решение? *</span><input id="actionDecisionSubject" placeholder="Например, имплантация"></label><label class="field"><span>Причина *</span><select id="actionDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="actionDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="actionDecisionOther"></textarea></label>` : ''}
+      ${needsDate ? manualDateMarkup('action', action === 'appointment' ? 'Дата приёма' : action === 'decision' ? 'Дата следующего контакта' : 'Дата задачи', action === 'invite_checkup' ? dateAfterMonths(6) : localDatePlus(1)) : ''}
       ${needsTime ? manualTimeMarkup('action', action === 'appointment' ? 'Время приёма' : 'Время', action === 'call' ? '12:00' : '10:00') : ''}
       ${needsDoctor ? `<label class="field"><span>Врач</span><select id="actionDoctor"><option value="">Не указан</option>${DOCTORS.map(doctor => `<option>${esc(doctor)}</option>`).join('')}</select></label>` : ''}
-      ${action === 'appointment' ? `<section class="appointment-confirmation span-2"><label class="check-field"><input type="checkbox" id="actionCreateConfirmation" checked> Создать задачу подтверждения записи</label><p>Дата выполнения задачи: <strong id="actionConfirmationDate">${formatDate(appointmentConfirmationDeadline(localDatePlus(1)).dueDate)}</strong></p><label class="field"><span>Комментарий задачи</span><textarea id="actionConfirmationComment">Подтвердить приём</textarea></label></section>` : ''}
+      ${action === 'decision' ? `<label class="field"><span>Ответственный администратор *</span><select id="actionDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="actionDecisionService"></label><label class="field span-2"><span>Последнее обещание пациента</span><input id="actionDecisionPromise"></label>` : ''}
+      ${action === 'appointment' ? `<section class="appointment-confirmation span-2"><label class="check-field"><input type="checkbox" id="actionCreateConfirmation" checked disabled> Задача подтверждения записи обязательна</label><p>Дата выполнения задачи: <strong id="actionConfirmationDate">${formatDate(appointmentConfirmationDeadline(localDatePlus(1)).dueDate)}</strong></p><label class="field"><span>Комментарий задачи</span><textarea id="actionConfirmationComment">Подтвердить приём</textarea></label></section>` : ''}
       ${action === 'refusal' ? `<label class="field span-2"><span>Причина отказа</span><select id="actionRefusalReason"><option value="">Выберите причину</option>${REFUSAL_REASONS.map(item => `<option value="${item.value}">${item.option}</option>`).join('')}</select><small class="form-error" id="actionRefusalReasonError"></small></label><label class="field span-2 hidden" id="actionOtherReasonField"><span>Описание причины</span><textarea id="actionOtherReason" placeholder="Опишите другую причину"></textarea><small class="form-error" id="actionOtherReasonError"></small></label>` : action === 'do_not_call' ? `<label class="field span-2"><span>Причина</span><input id="actionReason" placeholder="Укажите причину"></label>` : ''}
-      ${completedTreatment ? `<label class="check-field span-2 action-checkup-offer"><input type="checkbox" id="actionCreateCheckup" checked> Создать задачу «Профосмотр через 6 месяцев»</label><div id="actionCheckupDateField" class="custom-datetime-grid">${manualDateMarkup('actionCheckup', 'Дата профосмотра', dateAfterMonths(6))}${manualTimeMarkup('actionCheckup', 'Время профосмотра', '10:00')}</div>` : ''}
-      ${action === 'treatment' ? `<label class="check-field span-2 action-control-offer"><input type="checkbox" id="actionCreateControl"> Создать контрольную задачу</label><div class="hidden custom-datetime-grid" id="actionControlDateField">${manualDateMarkup('actionControl', 'Дата контроля', localDatePlus(7))}${manualTimeMarkup('actionControl', 'Время контроля', '10:00')}</div>` : ''}
+      ${completedTreatment ? `<label class="check-field span-2 action-checkup-offer"><input type="checkbox" id="actionCreateCheckup" checked disabled> Профосмотр после лечения обязателен</label><div id="actionCheckupDateField" class="custom-datetime-grid">${manualDateMarkup('actionCheckup', 'Дата профосмотра', dateAfterMonths(6))}${manualTimeMarkup('actionCheckup', 'Время профосмотра', '10:00')}</div>` : ''}
+      ${action === 'treatment' ? `<label class="check-field span-2 action-control-offer"><input type="checkbox" id="actionCreateControl" checked disabled> Контрольная задача обязательна</label><div class="custom-datetime-grid" id="actionControlDateField">${manualDateMarkup('actionControl', 'Дата контроля', localDatePlus(7))}${manualTimeMarkup('actionControl', 'Время контроля', '10:00')}</div>` : ''}
       <label class="field span-2"><span>Комментарий</span><textarea id="actionComment" placeholder="Необязательно"></textarea></label>
     </div>
     <div class="dialog-actions"><button class="btn" data-close-action>Отмена</button><button class="btn primary" id="savePatientAction">Сохранить</button></div>
@@ -2152,6 +2192,7 @@ function openPatientActionModal(patientId, action) {
     modal.querySelector('#actionRefusalReasonError').textContent = ''
   })
   modal.querySelector('#actionOtherReason')?.addEventListener('input', () => { modal.querySelector('#actionOtherReasonError').textContent = '' })
+  modal.querySelector('#actionDecisionReasonCode')?.addEventListener('change', event => modal.querySelector('#actionDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other'))
   if (needsDate) setupAppointmentActionFields(modal)
   if (needsTime) setupManualTime(modal, 'action')
   if (completedTreatment) { setupManualDate(modal, 'actionCheckup'); setupManualTime(modal, 'actionCheckup') }
@@ -2188,7 +2229,7 @@ function setupAppointmentActionFields(modal) {
 }
 
 function savePatientAction(patient, action, modal) {
-  const needsDate = ['call','reminder','thinking','invite_checkup','appointment'].includes(action)
+  const needsDate = ['call','reminder','decision','invite_checkup','appointment'].includes(action)
   const needsTime = needsDate
   let date = needsDate ? readManualDate(modal, 'action') : ''
   let time = needsTime ? readManualTime(modal, 'action') : ''
@@ -2198,11 +2239,30 @@ function savePatientAction(patient, action, modal) {
   const refusalReason = REFUSAL_REASONS.find(item => item.value === refusalReasonCode)
   const refusalReasonDetails = modal.querySelector('#actionOtherReason')?.value.trim() || ''
   const comment = modal.querySelector('#actionComment').value.trim()
+  const decisionSubject = modal.querySelector('#actionDecisionSubject')?.value.trim() || ''
+  const decisionReasonCode = modal.querySelector('#actionDecisionReasonCode')?.value || ''
+  const decisionReason = DECISION_REASONS.find(([value]) => value === decisionReasonCode)?.[1] || ''
+  const decisionOtherReason = modal.querySelector('#actionDecisionOther')?.value.trim() || ''
+  const decisionAssignee = modal.querySelector('#actionDecisionAssignee')?.value || ''
   if (needsDate && !date) return
   if (needsTime && !time) return
+  if (needsDate) {
+    const validation = validateFutureDateTime(date, time)
+    if (!validation.valid) return alert(validation.error)
+  }
+  if (action === 'appointment' && !doctor) return alert('Выберите врача')
   if (action === 'refusal' && !refusalReason) { modal.querySelector('#actionRefusalReasonError').textContent = 'Выберите причину отказа'; return }
   if (action === 'refusal' && refusalReasonCode === 'other' && !refusalReasonDetails) { modal.querySelector('#actionOtherReasonError').textContent = 'Опишите другую причину'; return }
   if (action === 'do_not_call' && !reason) return alert('Укажите причину')
+  if (action === 'decision' && (!decisionSubject || !decisionReason || !decisionAssignee || (decisionReasonCode === 'other' && !decisionOtherReason))) return alert('Заполните предмет решения, причину и ответственного администратора')
+  if (action === 'do_not_call') {
+    const draft = cloneData(state)
+    finalizePatientAsDoNotContactCore(draft, patient.id, reason, { id:currentUser.id, name:currentUser.name })
+    state = draft
+    saveState(`Не звонить: ${patient.name}`)
+    modal.remove(); renderPatients(); showToast('Пациент переведён в «Не звонить».')
+    return
+  }
   const controlDate = action === 'treatment' && modal.querySelector('#actionCreateControl')?.checked ? readManualDate(modal, 'actionControl') : ''
   const controlTime = action === 'treatment' && modal.querySelector('#actionCreateControl')?.checked ? readManualTime(modal, 'actionControl') : ''
   if (action === 'treatment' && modal.querySelector('#actionCreateControl')?.checked && (!controlDate || !controlTime)) return
@@ -2213,39 +2273,42 @@ function savePatientAction(patient, action, modal) {
   let text = ''
   let icon = '💬'
   if (action === 'call') {
-    createActionTask(patient, { type:'call', title:'📞 Позвонить', dueDate:date, dueAt:`${date}T${time}:00`, comment }, now)
+    createWorkflowTask(patient, { type:'call', title:'📞 Позвонить', dueDate:date, dueTime:time, comment, workflowType:'call', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`call:${patient.id}:${date}T${time}` }, now)
     icon = '📞'; text = `Позвонить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'reminder') {
-    createActionTask(patient, { type:'reminder', title:'🔔 Напомнить', dueDate:date, dueAt:`${date}T${time}:00`, comment, reminderTarget:'patient' }, now)
+    createWorkflowTask(patient, { type:'reminder', title:'🔔 Напомнить', dueDate:date, dueTime:time, comment, reminderTarget:'patient', workflowType:'reminder', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`reminder:${patient.id}:${date}T${time}:patient` }, now)
     icon = '🔔'; text = `Напомнить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'invite_checkup') {
     patient.status = '🔄 Профосмотр'
-    createActionTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:date, dueAt:`${date}T${time}:00`, comment }, now)
+    createWorkflowTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:date, dueTime:time, comment, workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${date}` }, now)
     icon = '🔄'; text = `Пригласить на профосмотр на ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
-  } else if (action === 'thinking') {
-    patient.status = '🤔 Думает'
-    createActionTask(patient, { type:'call', title:'📞 Позвонить', dueDate:date, dueAt:`${date}T${time}:00`, comment }, now)
-    icon = '🤔'; text = `Пациент думает. Позвонить ${formatDate(date)} в ${time}${comment ? `. ${comment}` : ''}.`
+  } else if (action === 'decision') {
+    const normalizedSubject = decisionSubject.toLocaleLowerCase('ru-RU')
+    const decisionTask = createWorkflowTask(patient, { type:'decision', title:`Уточнить решение по ${decisionSubject}`, dueDate:date, dueTime:time, assignee:decisionAssignee, comment:[decisionReason, decisionOtherReason, comment].filter(Boolean).join('. '), workflowType:'decision', workflowId:`decision:patient:${patient.id}:${normalizedSubject}`, parentTaskId:`quick-action:${patient.id}`, sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`quick-decision:${patient.id}:${normalizedSubject}` }, now)
+    Object.assign(decisionTask, { decisionSubject, decisionReasonCode, decisionReason, decisionOtherReason, decisionDoctor:doctor, decisionService:modal.querySelector('#actionDecisionService')?.value.trim() || '', decisionComment:comment, lastPatientPromise:modal.querySelector('#actionDecisionPromise')?.value.trim() || '', lastContactAt:now })
+    icon = '🤔'; text = `Решение не принято. Вопрос: ${decisionSubject}. Причина: ${decisionReason}${decisionOtherReason ? `. ${decisionOtherReason}` : ''}. Следующий контакт: ${formatDate(date)} в ${time}. Создана задача «${cleanTaskLabel(decisionTask.title)}».`
   } else if (action === 'appointment') {
+    patient.appointmentId ||= uid()
     patient.status = '📅 Записан на приём'; patient.appointmentDate = date; patient.appointmentAt = `${date}T${time}:00`
     if (doctor && !patient.doctors?.includes(doctor)) patient.doctors = [...(patient.doctors || []), doctor]
     completePatientTasks(patient.id, task => isCallTaskType(task.type), now, 'Пациент записан на приём')
     icon = '📅'; text = `Записан на приём ${formatDate(date)} в ${time}${doctor ? `, врач ${doctor}` : ''}${comment ? `. ${comment}` : ''}.`
-    if (modal.querySelector('#actionCreateConfirmation').checked) {
-      const deadline = appointmentConfirmationDeadline(date)
-      const confirmationComment = modal.querySelector('#actionConfirmationComment').value.trim() || 'Подтвердить приём'
-      createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:confirmationComment }, now)
-    }
+    const deadline = appointmentConfirmationDeadline(date)
+    const confirmationComment = modal.querySelector('#actionConfirmationComment').value.trim() || 'Подтвердить приём'
+    createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:confirmationComment, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
   } else if (action === 'refusal') {
     patient.status = '❌ Отказ'; completePatientTasks(patient.id, () => true, now, 'Отказ пациента')
     patient.refusalReason = refusalReason.value
     patient.refusalReasonLabel = refusalReason.label
     patient.refusalReasonDetails = refusalReasonDetails
     patient.refusalRecordedAt = now
+    const refusalFollowupDate = dateAfterMonths(Number(settings.refusalFollowupMonths) || 6)
+    createWorkflowTask(patient, {
+      type:'call', title:'📞 Контрольный контакт после отказа', dueDate:refusalFollowupDate, dueTime:'10:00',
+      comment:'Повторно связаться после отказа пациента', workflowType:'refusal', workflowId:`refusal:${patient.id}:${now}`,
+      sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`quick-refusal-followup:${patient.id}:${now}`,
+    }, now)
     icon = '❌'; text = `Отказ. Причина: ${refusalReason.label}${refusalReasonDetails ? `. ${refusalReasonDetails}` : ''}.${comment ? ` Комментарий: ${comment.replace(/[.\s]+$/, '')}.` : ''}`
-  } else if (action === 'do_not_call') {
-    patient.status = '🚫 Не звонить'; completePatientTasks(patient.id, () => true, now, 'Не звонить')
-    icon = '🚫'; text = `Не звонить. Причина: ${reason}${comment ? `. ${comment}` : ''}.`
   } else if (action === 'simple_comment') {
     if (!comment) return alert('Введите комментарий')
     icon = '💬'; text = comment.replace(/[.\s]+$/, '') + '.'
@@ -2257,12 +2320,12 @@ function savePatientAction(patient, action, modal) {
     if (action === 'treatment') {
       completePatientTasks(patient.id, () => true, now, 'Лечение начато')
       if (modal.querySelector('#actionCreateControl')?.checked) {
-        createActionTask(patient, { type:'postop_control', title:'🪡 Контроль после начала лечения', dueDate:controlDate, dueAt:`${controlDate}T${controlTime}:00`, comment:comment || 'Контроль после начала лечения' }, now)
+        createWorkflowTask(patient, { type:'postop_control', title:'🪡 Контроль после начала лечения', dueDate:controlDate, dueTime:controlTime, comment:comment || 'Контроль после начала лечения', workflowType:'treatment', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`treatment-control:${patient.id}:${controlDate}` }, now)
         text += ` Контроль назначен на ${formatDate(controlDate)} в ${controlTime}.`
       }
     }
     if (action === 'treatment_completed' && modal.querySelector('#actionCreateCheckup')?.checked) {
-      createActionTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:checkupDate, dueAt:`${checkupDate}T${checkupTime}:00`, comment:'Профосмотр после завершения лечения' }, now)
+      createWorkflowTask(patient, { type:'invite_checkup', title:'🦷 Пригласить на профосмотр', dueDate:checkupDate, dueTime:checkupTime, comment:'Профосмотр после завершения лечения', workflowType:'checkup', sourceEntityType:'patient', sourceEntityId:patient.id, idempotencyKey:`checkup:${patient.id}:${checkupDate}` }, now)
       text += ` Профосмотр назначен на ${formatDate(checkupDate)} в ${checkupTime}.`
     }
   }
@@ -2414,7 +2477,7 @@ function renderWaitlist() {
   const priorityOrder = { high:0, medium:1, low:2 }
   const entries = activeWaitlistEntries().filter(entry => {
     const patient = state.patients.find(item => item.id === entry.patientId)
-    const haystack = [patient?.name, ...(patient?.phones || []), entry.doctor].filter(Boolean).join(' ').toLowerCase()
+    const haystack = [patient?.name, ...(patient?.phones || []), entry.doctor, entry.preferenceText, ...waitlistPreferenceLabels(entry), waitlistTreatmentLabel(entry), entry.comment, entry.administrator || entry.addedBy].filter(Boolean).join(' ').toLowerCase()
     const query = waitlistFilters.search.trim().toLowerCase()
     return (!query || haystack.includes(query) || normalizePhone(haystack).includes(normalizePhone(query)))
       && (!waitlistFilters.doctor || entry.doctor === waitlistFilters.doctor)
@@ -2450,7 +2513,7 @@ function renderWaitlist() {
   })
   content.querySelectorAll('[data-waitlist-filter]').forEach(select => select.onchange = () => { waitlistFilters[select.dataset.waitlistFilter] = select.value; renderWaitlist() })
   content.querySelectorAll('[data-edit-waitlist]').forEach(button => button.onclick = event => { event.stopPropagation(); openWaitlistEntryModal(null, button.dataset.editWaitlist) })
-  content.querySelectorAll('[data-remove-waitlist]').forEach(button => button.onclick = event => { event.stopPropagation(); removeWaitlistEntry(button.dataset.removeWaitlist) })
+  content.querySelectorAll('[data-remove-waitlist]').forEach(button => button.onclick = event => { event.stopPropagation(); openWaitlistCompletionModal(button.dataset.removeWaitlist) })
   content.querySelectorAll('[data-waitlist-patient]').forEach(button => button.onclick = event => { event.stopPropagation(); openPatientModal(button.dataset.waitlistPatient) })
   content.querySelectorAll('[data-waitlist-row]').forEach(row => {
     const open = event => { if (event.type === 'keydown' && !['Enter',' '].includes(event.key)) return; event.preventDefault(); openWaitlistEntryModal(null, row.dataset.waitlistRow) }
@@ -2520,7 +2583,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     if (opening) modal.querySelector('#waitlistPatientName').focus()
   })
   modal.querySelector('#waitlistPatientSpecialNote')?.addEventListener('input', event => { modal.querySelector('#waitlistSpecialNoteCounter').textContent = event.target.value.length })
-  modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); removeWaitlistEntry(existing.id) })
+  modal.querySelector('#deleteWaitlistEntry')?.addEventListener('click', () => { close(); openWaitlistCompletionModal(existing.id) })
   modal.querySelector('#saveWaitlistEntry').onclick = () => {
     const creatingPatient = !modal.querySelector('#waitlistNewPatientFields')?.classList.contains('hidden')
     let selectedPatientId = modal.querySelector('#waitlistPatient').value
@@ -2552,12 +2615,16 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     if (!Number.isFinite(durationMinutes) || durationMinutes < 5) return alert('Укажите корректную продолжительность')
     const duplicate = activeWaitlistEntries().find(item => item.patientId === selectedPatientId && item.id !== existing?.id)
     if (duplicate) return alert('Этот пациент уже находится в листе ожидания')
+    const saveButton = modal.querySelector('#saveWaitlistEntry')
+    if (saveButton.dataset.saving === '1') return
+    saveButton.dataset.saving = '1'; saveButton.disabled = true
     if (newPatient) {
       state.patients.push(newPatient)
       if (newPatient.appointmentDate) {
         const deadline = appointmentConfirmationDeadline(newPatient.appointmentDate)
         const appointmentTime = newPatient.appointmentAt.slice(11, 16)
-        const confirmationTask = createActionTask(newPatient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(newPatient.appointmentDate)} в ${appointmentTime}` }, newPatient.createdAt)
+        newPatient.appointmentId ||= uid()
+        const confirmationTask = createWorkflowTask(newPatient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(newPatient.appointmentDate)} в ${appointmentTime}`, appointmentId:newPatient.appointmentId, workflowType:'appointment', workflowId:`appointment:${newPatient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:newPatient.appointmentId, idempotencyKey:`appointment-confirmation:${newPatient.appointmentId}` }, newPatient.createdAt)
         confirmationTask.confirmationAppointmentDate = newPatient.appointmentDate
       }
     }
@@ -2579,26 +2646,9 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
   }
 }
 
-function ensureWaitlistTask(entry) {
-  const now = new Date().toISOString()
-  const patient = state.patients.find(item => item.id === entry.patientId)
-  const treatment = waitlistTreatmentLabel(entry)
-  const details = [treatment, entry.comment].filter(Boolean).join(' · ')
-  let task = state.tasks.find(item => item.waitlistEntryId === entry.id)
-    || state.tasks.find(item => item.patientId === entry.patientId && item.type === 'waitlist' && isTaskActive(item))
-  if (!task) {
-    task = {
-      id:uid(), patientId:entry.patientId, waitlistEntryId:entry.id, type:'waitlist', title:'⏳ Лист ожидания',
-      dueDate:'', dueAt:null, comment:details, note:details, assignee:entry.administrator || currentUser.name,
-      status:'active', completedAt:null, createdAt:now, createdBy:currentUser.name,
-    }
-    state.tasks.push(task)
-    patient?.history?.unshift(createHistoryEntry('task', 'Создана задача «Лист ожидания».', { actionIcon:'⏳', taskType:'waitlist' }))
-  } else {
-    Object.assign(task, { waitlistEntryId:entry.id, title:'⏳ Лист ожидания', comment:details, note:details,
-      assignee:entry.administrator || task.assignee || currentUser.name, status:'active', completedAt:null, updatedAt:now, updatedBy:currentUser.name })
-  }
-  return task
+function ensureWaitlistTask(entryOrId, schedule = {}) {
+  const entryId = typeof entryOrId === 'string' ? entryOrId : entryOrId?.id
+  return ensureWaitlistTaskCore(state, entryId, { id:currentUser?.id, name:currentUser?.name || 'Система' }, schedule)
 }
 
 function movePatientToWaitlist(patient, sourceTask, dueDate, dueTime, comment, createdAt) {
@@ -2614,23 +2664,86 @@ function movePatientToWaitlist(patient, sourceTask, dueDate, dueTime, comment, c
     state.waitlist.push(entry)
   }
   Object.assign(entry, { status:'active', updatedAt:createdAt, updatedBy:currentUser.name })
-  const waitlistTask = ensureWaitlistTask(entry)
-  Object.assign(waitlistTask, { dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:entry.comment, note:entry.comment, updatedAt:createdAt, updatedBy:currentUser.name })
+  const waitlistTask = ensureWaitlistTask(entry.id, { dueDate, dueTime })
+  Object.assign(waitlistTask, { dueDate, dueAt:`${dueDate}T${dueTime}:00`, parentTaskId:sourceTask.id, comment:entry.comment, note:entry.comment, updatedAt:createdAt, updatedBy:currentUser.name })
   return waitlistTask
 }
 
 function createWorkflowTask(patient, spec, createdAt = new Date().toISOString()) {
-  if (!patient || !spec?.type || !spec?.dueDate) throw new Error('Для следующего действия не определены тип или дата задачи')
-  const dueAt = spec.dueAt || `${spec.dueDate}T${spec.dueTime || '10:00'}:00`
-  const duplicate = state.tasks.find(task => task.patientId === patient.id && isTaskActive(task) && task.type === spec.type && task.dueAt === dueAt && cleanTaskLabel(task.title) === cleanTaskLabel(spec.title))
-  if (duplicate) return duplicate
-  const task = createActionTask(patient, { ...spec, dueAt }, createdAt)
+  const task = createWorkflowTaskCore(state, patient, spec, { id:currentUser?.id, name:currentUser?.name || 'Система', now:createdAt })
   if (spec.reminderMethod) task.reminderMethod = spec.reminderMethod
+  if (isCheckupTaskType(spec.type)) patient.status = '🔄 Профосмотр'
   return task
 }
 
 function activePatientTasksExcept(patientId, taskId) {
   return state.tasks.filter(task => task.patientId === patientId && task.id !== taskId && isTaskActive(task))
+}
+
+function openWaitlistCompletionModal(entryId) {
+  const entry = activeWaitlistEntries().find(item => item.id === entryId)
+  const patient = state.patients.find(item => item.id === entry?.patientId)
+  if (!entry || !patient) return alert('Запись ожидания или пациент не найдены')
+  document.querySelector('#waitlistCompletionModal')?.remove()
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="waitlistCompletionModal"><div class="dialog"><div class="dialog-head"><div><h2>Завершение записи ожидания</h2><p>${esc(patient.name)}</p></div><button class="icon-btn" data-close-waitlist-completion>×</button></div><label class="field"><span>Результат</span><select id="waitlistCompletionOutcome"><option value="booked">Записан на приём</option><option value="waiting">Продолжает ждать</option><option value="no_contact">Не дозвонились</option><option value="later">Связаться позже</option><option value="refused">Отказался ждать</option><option value="do_not_call">Не звонить</option><option value="duplicate">Ошибочная или дублирующая запись</option></select></label><div id="waitlistCompletionDateFields" class="custom-datetime-grid">${manualDateMarkup('waitlistCompletion', 'Дата следующего действия', localDatePlus(1))}${manualTimeMarkup('waitlistCompletion', 'Время', '10:00')}</div><label class="field" id="waitlistCompletionDoctorField"><span>Врач</span><select id="waitlistCompletionDoctor"><option value="">Выберите врача</option>${DOCTORS.map(value => `<option>${esc(value)}</option>`).join('')}</select></label><label class="field"><span>Причина / комментарий *</span><textarea id="waitlistCompletionReason"></textarea></label><div class="dialog-actions"><button class="btn" data-close-waitlist-completion>Отмена</button><button class="btn primary" id="saveWaitlistCompletion">Сохранить результат</button></div></div></div>`)
+  const modal = document.querySelector('#waitlistCompletionModal')
+  const close = () => modal.remove()
+  modal.querySelectorAll('[data-close-waitlist-completion]').forEach(button => button.onclick = close)
+  closeOnBackdropClick(modal, close)
+  setupManualDate(modal, 'waitlistCompletion'); setupManualTime(modal, 'waitlistCompletion')
+  const refresh = () => {
+    const outcome = modal.querySelector('#waitlistCompletionOutcome').value
+    modal.querySelector('#waitlistCompletionDateFields').classList.toggle('hidden', ['do_not_call','duplicate'].includes(outcome))
+    modal.querySelector('#waitlistCompletionDoctorField').classList.toggle('hidden', outcome !== 'booked')
+  }
+  modal.querySelector('#waitlistCompletionOutcome').onchange = refresh; refresh()
+  modal.querySelector('#saveWaitlistCompletion').onclick = () => {
+    const button = modal.querySelector('#saveWaitlistCompletion')
+    if (button.dataset.saving === '1') return
+    const outcome = modal.querySelector('#waitlistCompletionOutcome').value
+    const reason = modal.querySelector('#waitlistCompletionReason').value.trim()
+    if (!reason) return alert('Укажите причину или комментарий')
+    const draft = cloneData(state)
+    const draftEntry = draft.waitlist.find(item => item.id === entry.id)
+    const draftPatient = draft.patients.find(item => item.id === patient.id)
+    const now = new Date().toISOString()
+    const actor = { id:currentUser.id, name:currentUser.name, now }
+    const linkedTasks = draft.tasks.filter(task => task.patientId === patient.id && isTaskActive(task) && (task.waitlistEntryId === entry.id || task.workflowId === `waitlist:${entry.id}`))
+    if (outcome === 'do_not_call') finalizePatientAsDoNotContactCore(draft, patient.id, reason, actor)
+    else if (outcome === 'duplicate') {
+      const otherAction = draft.tasks.some(task => task.patientId === patient.id && isTaskActive(task) && !linkedTasks.some(linked => linked.id === task.id))
+      if (!otherAction) return alert('Ошибочную запись можно удалить только при наличии другого активного действия пациента')
+      if (!confirm('Запись будет удалена как ошибочная. Продолжить?')) return
+      draftEntry.status = 'removed'; draftEntry.removedAt = now; draftEntry.removedBy = currentUser.name; draftEntry.removalReason = reason
+      linkedTasks.forEach(task => { task.status = TASK_STATUS_CANCELLED; task.completedAt = now; task.completedBy = currentUser.name; task.lastResult = 'Ошибочная запись' })
+    } else {
+      const dueDate = readManualDate(modal, 'waitlistCompletion'); const dueTime = readManualTime(modal, 'waitlistCompletion')
+      const validation = validateFutureDateTime(dueDate, dueTime)
+      if (!validation.valid) return alert(validation.error)
+      linkedTasks.forEach(task => { task.status = TASK_STATUS_COMPLETED; task.completedAt = now; task.completedBy = currentUser.name; task.lastResult = outcome })
+      if (outcome === 'booked') {
+        const doctor = modal.querySelector('#waitlistCompletionDoctor').value
+        if (!doctor) return alert('Выберите врача')
+        draftEntry.status = 'removed'; draftEntry.removedAt = now; draftEntry.removedBy = currentUser.name
+        const appointmentId = makeAppointmentId(patient.id)
+        draftPatient.appointmentId = appointmentId; draftPatient.appointmentDate = dueDate; draftPatient.appointmentAt = `${dueDate}T${dueTime}:00`; draftPatient.doctors = [doctor]; draftPatient.status = '📅 Записан на приём'
+        const deadline = appointmentConfirmationDeadline(dueDate)
+        createWorkflowTaskCore(draft,draftPatient,{type:'call',title:'📞 Подтвердить приём',dueDate:deadline.dueDate,dueAt:deadline.dueAt,appointmentId,workflowType:'appointment',workflowId:`appointment:${appointmentId}`,parentTaskId:linkedTasks[0]?.id||null,sourceEntityType:'appointment',sourceEntityId:appointmentId,idempotencyKey:`appointment-confirmation:${appointmentId}`,comment:reason},actor)
+      } else {
+        const nextType = outcome === 'waiting' ? 'waitlist' : outcome === 'later' ? 'reminder' : outcome === 'refused' ? 'call' : 'call'
+        const title = outcome === 'waiting' ? '⏳ Следующий контакт по листу ожидания' : outcome === 'later' ? '🔔 Связаться позже по листу ожидания' : outcome === 'refused' ? '📞 Контрольный контакт после отказа от ожидания' : '📞 Повторный звонок по листу ожидания'
+        if (outcome === 'refused') { draftEntry.status = 'removed'; draftEntry.removedAt = now; draftEntry.removedBy = currentUser.name; draftPatient.status = '❌ Отказ' }
+        createWorkflowTaskCore(draft,draftPatient,{type:nextType,title,dueDate,dueTime,waitlistEntryId:entry.id,workflowType:'waitlist',workflowId:`waitlist:${entry.id}`,parentTaskId:linkedTasks[0]?.id||null,sourceEntityType:'waitlist',sourceEntityId:entry.id,idempotencyKey:`waitlist:${entry.id}:${outcome}:${validation.dueAt}`,comment:reason},actor)
+      }
+    }
+    draftPatient.history ||= []; draftPatient.history.unshift({ id:uid(), createdAt:now, authorId:currentUser.id, authorName:currentUser.name, actionType:'waitlist_outcome', text:`Лист ожидания: ${outcome}. ${reason}.` })
+    button.dataset.saving = '1'; button.disabled = true
+    state = draft; saveState(`Завершение записи ожидания: ${patient.name}`); close(); renderShell(); showToast('Результат листа ожидания сохранён.')
+  }
+}
+
+function makeAppointmentId(patientId) {
+  return `appointment-${patientId}-${Date.now()}`
 }
 
 function removeWaitlistEntry(entryId, skipConfirm = false) {
@@ -2823,12 +2936,14 @@ function openReminderResultModal(task, options = {}) {
   document.querySelector('#reminderResultModal')?.remove()
   const results = [
     ['appointment','✅ Записали на приём'],
+    ['decision','🤔 Решение не принято'],
     ['postponed','⏳ Отложили'], ['repeat','🔁 Напомнить ещё раз'],
   ]
   document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="reminderResultModal"><div class="dialog reminder-result-dialog" role="dialog" aria-modal="true" aria-labelledby="reminderResultTitle">
     <div class="dialog-head"><div><h2 id="reminderResultTitle">Чем закончилось напоминание?</h2><p>${esc(patient.name)} · ${esc(task.note || task.comment || '')}</p></div><button class="icon-btn" data-close-reminder-result>×</button></div>
     <div class="call-result-options reminder-result-options">${results.map(([value,label]) => `<label><input type="radio" name="reminderResult" value="${value}"> <span>${label}</span></label>`).join('')}</div>
-    <section class="hidden reminder-repeat-fields" id="reminderRepeatFields"><h3 class="call-result-step" id="reminderNextDateTitle">Новая дата напоминания</h3><div class="custom-datetime-grid">${manualDateMarkup('reminderRepeat', 'Дата', localDatePlus(1))}${manualTimeMarkup('reminderRepeat', 'Время', '10:00')}</div></section>
+    <section class="hidden reminder-repeat-fields" id="reminderRepeatFields"><h3 class="call-result-step" id="reminderNextDateTitle">Новая дата напоминания</h3><div class="custom-datetime-grid">${manualDateMarkup('reminderRepeat', 'Дата', localDatePlus(1))}${manualTimeMarkup('reminderRepeat', 'Время', '10:00')}</div><label class="field hidden" id="reminderAppointmentDoctorField"><span>Врач</span><select id="reminderAppointmentDoctor"><option value="">Выберите врача</option>${DOCTORS.map(value => `<option>${esc(value)}</option>`).join('')}</select></label></section>
+    <section class="hidden outcome-extra" id="reminderDecisionFields"><label class="field"><span>По какому вопросу пациент принимает решение? *</span><input id="reminderDecisionSubject"></label><label class="field"><span>Причина *</span><select id="reminderDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="reminderDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="reminderDecisionOther"></textarea></label><div class="custom-datetime-grid">${manualDateMarkup('reminderDecision', 'Дата следующего контакта', localDatePlus(1))}${manualTimeMarkup('reminderDecision', 'Время следующего контакта', '10:00')}</div><label class="field"><span>Ответственный администратор *</span><select id="reminderDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Врач</span><select id="reminderDecisionDoctor"><option value="">Не указан</option>${DOCTORS.map(value => `<option>${esc(value)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="reminderDecisionService"></label><label class="field"><span>Последнее обещание пациента</span><input id="reminderDecisionPromise"></label></section>
     <label class="field call-result-comment"><span>Комментарий</span><textarea id="reminderResultComment" placeholder="Необязательно">${esc(initialComment)}</textarea><small class="form-error" id="reminderResultError"></small></label>
     <section class="next-action-preview hidden" id="reminderNextActionPreview"><strong>✓ Следующее действие</strong><p></p></section><div class="dialog-actions"><button class="btn" data-close-reminder-result>Отмена</button><button class="btn primary" id="saveReminderResult" disabled>Сохранить</button></div>
   </div></div>`)
@@ -2838,32 +2953,47 @@ function openReminderResultModal(task, options = {}) {
   closeOnBackdropClick(modal, close)
   setupManualDate(modal, 'reminderRepeat')
   setupManualTime(modal, 'reminderRepeat')
+  setupManualDate(modal, 'reminderDecision')
+  setupManualTime(modal, 'reminderDecision')
   const saveButton = modal.querySelector('#saveReminderResult')
   modal.querySelectorAll('[name="reminderResult"]').forEach(radio => radio.onchange = () => {
     const needsDate = ['repeat','postponed','appointment'].includes(radio.value)
     modal.querySelector('#reminderRepeatFields').classList.toggle('hidden', !needsDate)
+    modal.querySelector('#reminderDecisionFields').classList.toggle('hidden', radio.value !== 'decision')
     modal.querySelector('#reminderNextDateTitle').textContent = radio.value === 'appointment' ? 'Дата и время приёма' : 'Когда создать следующую задачу?'
+    modal.querySelector('#reminderAppointmentDoctorField').classList.toggle('hidden', radio.value !== 'appointment')
     const preview = modal.querySelector('#reminderNextActionPreview')
     preview.classList.remove('hidden')
-    preview.querySelector('p').textContent = radio.value === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : radio.value === 'postponed' ? 'Пациент будет добавлен в лист ожидания и получит задачу: ⏳ Лист ожидания' : needsDate ? 'Будет создана новая задача напоминания' : 'Будет создано следующее действие, если других активных задач нет'
+    preview.querySelector('p').textContent = radio.value === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : radio.value === 'decision' ? 'Этап не изменится. Будет создана задача: 🤔 Уточнить решение' : radio.value === 'postponed' ? 'Пациент будет добавлен в лист ожидания и получит задачу: ⏳ Лист ожидания' : needsDate ? 'Будет создана новая задача напоминания' : 'Будет создано следующее действие, если других активных задач нет'
     modal.querySelector('#reminderResultError').textContent = ''
     saveButton.disabled = false
   })
   modal.querySelector('#reminderResultComment').oninput = () => { modal.querySelector('#reminderResultError').textContent = '' }
+  modal.querySelector('#reminderDecisionReasonCode').onchange = event => modal.querySelector('#reminderDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other')
   saveButton.onclick = guardTaskResultSave(modal, () => {
     const result = modal.querySelector('[name="reminderResult"]:checked')?.value
     const comment = modal.querySelector('#reminderResultComment').value.trim()
     if (!result) return
     const now = new Date().toISOString()
     const resultLabels = { appointment:'Пациент записан на приём' }
-    if (result === 'appointment') {
+    if (result === 'decision') {
+      const reasonCode = modal.querySelector('#reminderDecisionReasonCode').value
+      const reason = DECISION_REASONS.find(([value]) => value === reasonCode)?.[1] || ''
+      const formData = { subject:modal.querySelector('#reminderDecisionSubject').value.trim(), reasonCode, reason, otherReason:modal.querySelector('#reminderDecisionOther').value.trim(), dueDate:readManualDate(modal,'reminderDecision'), dueTime:readManualTime(modal,'reminderDecision'), assignee:modal.querySelector('#reminderDecisionAssignee').value, doctor:modal.querySelector('#reminderDecisionDoctor').value, service:modal.querySelector('#reminderDecisionService').value.trim(), lastPromise:modal.querySelector('#reminderDecisionPromise').value.trim(), comment }
+      const applied = applyDecisionOutcomeCore({ state,taskId:task.id,formData,actor:{id:currentUser.id,name:currentUser.name,now} })
+      state = applied.state
+    } else if (result === 'appointment') {
       const appointmentDate = readManualDate(modal, 'reminderRepeat')
       const appointmentTime = readManualTime(modal, 'reminderRepeat')
       if (!appointmentDate || !appointmentTime) return
+      const validation = validateFutureDateTime(appointmentDate, appointmentTime)
+      if (!validation.valid) return alert(validation.error)
+      const doctor = modal.querySelector('#reminderAppointmentDoctor').value
+      if (!doctor) return alert('Выберите врача')
       completeTaskRecord(task, now, 'Пациент записан на приём', comment)
-      patient.appointmentDate = appointmentDate; patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`; patient.status = '📅 Записан на приём'
+      patient.appointmentDate = appointmentDate; patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`; patient.status = '📅 Записан на приём'; patient.doctors = [doctor]; patient.appointmentId ||= uid()
       const deadline = appointmentConfirmationDeadline(appointmentDate)
-      createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}` }, now)
+      createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
     } else if (['repeat','postponed'].includes(result)) {
       const dueDate = readManualDate(modal, 'reminderRepeat')
       const dueTime = readManualTime(modal, 'reminderRepeat')
@@ -2872,7 +3002,7 @@ function openReminderResultModal(task, options = {}) {
       const inheritedComment = [...new Set([task.note || task.comment || '', comment].filter(Boolean))].join(' ')
       const nextTask = result === 'postponed'
         ? movePatientToWaitlist(patient, task, dueDate, dueTime, inheritedComment, now)
-        : createActionTask(patient, { type:'reminder', title:task.title, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient' }, now)
+        : createWorkflowTask(patient, { type:'reminder', title:task.title, dueDate, dueTime, comment:inheritedComment, reminderTarget:task.reminderTarget || 'patient', workflowType:task.workflowType || 'reminder', workflowId:task.workflowId || `reminder:${patient.id}:${task.id}`, parentTaskId:task.id, sourceEntityType:task.sourceEntityType || 'task', sourceEntityId:task.sourceEntityId || task.id, idempotencyKey:`reminder-repeat:${task.id}:${dueDate}T${dueTime}` }, now)
       if (result === 'repeat') nextTask.reminderMethod = task.reminderMethod || (task.reminderTarget === 'doctor' ? 'doctor' : 'call')
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', `Напоминание перенесено на ${formatDate(dueDate)} ${dueTime}.`, { actionIcon:'🔁', taskType:'reminder' }))
@@ -2883,9 +3013,10 @@ function openReminderResultModal(task, options = {}) {
       patient.history.unshift(createHistoryEntry('task_completed', `Напоминание выполнено. ${resultText}${/[.!?]$/.test(resultText) ? '' : '.'}`, { actionIcon:'🔔', taskType:'reminder' }))
       ensureSimpleOutcomeContinuation('reminder', result, patient, task, now)
     }
-    if (!activePatientTasksExcept(patient.id, task.id).length) throw new Error('Результат напоминания не определил следующее действие')
-    patient.updatedAt = now
-    patient.updatedBy = currentUser.name
+    if (!state.tasks.some(item => item.patientId === patient.id && item.id !== task.id && isTaskActive(item) && (item.parentTaskId === task.id || item.workflowId === task.workflowId || item.sourceEntityId === task.id))) throw new Error('Результат напоминания не определил связанное следующее действие')
+    const savedPatient = state.patients.find(item => item.id === patient.id)
+    savedPatient.updatedAt = now
+    savedPatient.updatedBy = currentUser.name
     saveState(result === 'postponed' ? `Пациент добавлен в лист ожидания: ${patient.name}` : result === 'repeat' ? `Перенесено напоминание: ${patient.name}` : `Выполнено напоминание: ${patient.name}`)
     modal.remove()
     finishCallResult(options)
@@ -2894,27 +3025,26 @@ function openReminderResultModal(task, options = {}) {
 }
 
 function ensureSimpleOutcomeContinuation(kind, value, patient, task, createdAt) {
-  const existing = activePatientTasksExcept(patient.id, task.id)
-  if (existing.length) return { existing:true, task:existing[0] }
   const settings = loadSystemSettings()
-  if (value === 'refused') return { task:createWorkflowTask(patient, { type:'call', title:'📞 Контрольный контакт после отказа', dueDate:dateAfterMonths(Number(settings.refusalFollowupMonths) || 6), dueTime:'10:00', comment:`Повторно связаться после отказа (${kind})` }, createdAt) }
-  if (['control','postop_control','implant_check'].includes(kind) && ['completed','normal'].includes(value)) return { task:createWorkflowTask(patient, { type:'invite_checkup', title:'🦷 Профосмотр', dueDate:dateAfterMonths(Number(settings.checkupAfterTreatmentMonths) || 6), dueTime:'10:00', comment:'Плановый осмотр после контроля' }, createdAt) }
+  const meta = { workflowType:task.workflowType || kind, workflowId:task.workflowId || `${kind}:${patient.id}:${task.id}`, parentTaskId:task.id, sourceEntityType:task.sourceEntityType || 'task', sourceEntityId:task.sourceEntityId || task.id }
+  if (value === 'refused') return { task:createWorkflowTask(patient, { ...meta, type:'call', title:'📞 Контрольный контакт после отказа', dueDate:dateAfterMonths(Number(settings.refusalFollowupMonths) || 6), dueTime:'10:00', comment:`Повторно связаться после отказа (${kind})`, idempotencyKey:`refusal-followup:${task.id}` }, createdAt) }
+  if (['control','postop_control','implant_check'].includes(kind) && ['completed','normal'].includes(value)) return { task:createWorkflowTask(patient, { ...meta, type:'invite_checkup', title:'🦷 Профосмотр', dueDate:dateAfterMonths(Number(settings.checkupAfterTreatmentMonths) || 6), dueTime:'10:00', comment:'Плановый осмотр после контроля', idempotencyKey:`control-checkup:${task.id}` }, createdAt) }
   const titles = {
     message:'🔔 Проверить ответ пациента', documents:'🔔 Проверить получение документов', image:'🔔 Передать снимок врачу',
     control:'🔔 Проверить дальнейшее действие', postop_control:'🔔 Проверить состояние пациента', implant_check:'🔔 Проверить дальнейшее лечение',
     generic:'🔔 Проверить дальнейшее действие',
   }
-  return { task:createWorkflowTask(patient, { type:'reminder', title:titles[kind] || '🔔 Следующее действие', dueDate:localDatePlus(1), dueTime:'10:00', comment:'Автоматическое продолжение рабочего процесса' }, createdAt) }
+  return { task:createWorkflowTask(patient, { ...meta, type:'reminder', title:titles[kind] || '🔔 Следующее действие', dueDate:localDatePlus(1), dueTime:'10:00', comment:'Автоматическое продолжение рабочего процесса', idempotencyKey:`workflow-followup:${task.id}:${value}` }, createdAt) }
 }
 
 function openSimpleTaskExecution(task, kind, options = {}) {
   const patient = state.patients.find(item => item.id === task.patientId)
   if (!patient) return
   const configs = {
-    message:{ title:'✉ Результат сообщения', results:[['sent','Сообщение доставлено',false],['no_reply','Нет ответа',true],['later','Попросил написать позже',true],['refused','Отказался от дальнейшей переписки',false]] },
-    appointment:{ title:'📅 Результат записи на приём', results:[['booked','Записали на приём',false,'appointment'],['no_contact','Не удалось связаться',true],['later','Попросил связаться позже',true],['refused','Отказался от записи',false]] },
-    checkup:{ title:'🦷 Результат приглашения на профосмотр', results:[['booked','Записали на профосмотр',false,'appointment'],['no_contact','Не дозвонились',true],['later','Попросил напомнить позже',true],['refused','Отказался от профосмотра',false]] },
-    documents:{ title:'📄 Результат отправки документов', results:[['sent','Документы отправлены',false],['clarify','Нужно уточнить данные',true],['later','Попросил отправить позже',true],['refused','Отказался получать документы',false]] },
+    message:{ title:'✉ Результат сообщения', results:[['sent','Сообщение доставлено',false],['decision','Решение не принято',false,'decision'],['no_reply','Нет ответа',true],['later','Попросил написать позже',true],['refused','Отказался от дальнейшей переписки',false]] },
+    appointment:{ title:'📅 Результат записи на приём', results:[['booked','Записали на приём',false,'appointment'],['decision','Решение не принято',false,'decision'],['no_contact','Не удалось связаться',true],['later','Попросил связаться позже',true],['refused','Отказался от записи',false]] },
+    checkup:{ title:'🦷 Результат приглашения на профосмотр', results:[['booked','Записали на профосмотр',false,'appointment'],['decision','Решение не принято',false,'decision'],['no_contact','Не дозвонились',true],['later','Попросил напомнить позже',true],['refused','Отказался от профосмотра',false]] },
+    documents:{ title:'📄 Результат отправки документов', results:[['sent','Документы отправлены',false],['decision','Решение не принято',false,'decision'],['clarify','Нужно уточнить данные',true],['later','Попросил отправить позже',true],['refused','Отказался получать документы',false]] },
     image:{ title:'🩻 Результат запроса снимка', results:[['received','Снимок получен',false],['requested_again','Запросили повторно',true],['later','Пациент пришлёт позже',true],['refused','Пациент отказался присылать снимок',false]] },
     control:{ title:'🦷 Результат контроля', results:[['completed','Контроль проведён',false],['repeat','Нужен повторный контроль',true],['no_show','Пациент не явился',true],['referred','Передано врачу',false]] },
     postop_control:{ title:'🪡 Результат контроля после операции', results:[['normal','Состояние в норме',false],['repeat','Нужен повторный контроль',true],['no_show','Пациент не явился',true],['doctor','Есть жалобы — передано врачу',false]] },
@@ -2924,21 +3054,24 @@ function openSimpleTaskExecution(task, kind, options = {}) {
   }
   const config = configs[kind] || configs.generic
   document.querySelector('#simpleTaskExecutionModal')?.remove()
-  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="simpleTaskExecutionModal"><div class="dialog simple-task-execution-dialog" role="dialog" aria-modal="true" aria-labelledby="simpleTaskExecutionTitle"><div class="dialog-head"><div><h2 id="simpleTaskExecutionTitle">${config.title}</h2><p>${esc(patient.name)} · ${esc(cleanTaskLabel(task.title))}</p></div><button class="icon-btn" data-close-simple-task>×</button></div><h3 class="call-result-step">Выберите результат</h3><div class="call-result-options">${config.results.map(([value,label]) => `<label><input type="radio" name="simpleTaskResult" value="${value}"> <span>${label}</span></label>`).join('')}</div><section class="hidden simple-task-retry" id="simpleTaskRetry"><h3 class="call-result-step">Когда продолжить работу?</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleRetry', 'Дата новой задачи', localDatePlus(1))}${manualTimeMarkup('simpleRetry', 'Время', '10:00')}</div></section><section class="hidden simple-task-appointment" id="simpleTaskAppointment"><h3 class="call-result-step">Дата и время приёма</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleAppointment', 'Дата приёма', localDatePlus(1))}${manualTimeMarkup('simpleAppointment', 'Время', '10:00')}</div></section><label class="field call-result-comment"><span>Примечание</span><textarea id="simpleTaskComment" placeholder="Необязательно"></textarea></label><section class="next-action-preview hidden" id="simpleNextActionPreview"><strong>✓ Следующее действие</strong><p></p></section><div class="dialog-actions"><button class="btn" data-close-simple-task>Отмена</button><button class="btn primary" id="saveSimpleTaskResult" disabled>Сохранить результат</button></div></div></div>`)
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal" id="simpleTaskExecutionModal"><div class="dialog simple-task-execution-dialog" role="dialog" aria-modal="true" aria-labelledby="simpleTaskExecutionTitle"><div class="dialog-head"><div><h2 id="simpleTaskExecutionTitle">${config.title}</h2><p>${esc(patient.name)} · ${esc(cleanTaskLabel(task.title))}</p></div><button class="icon-btn" data-close-simple-task>×</button></div><h3 class="call-result-step">Выберите результат</h3><div class="call-result-options">${config.results.map(([value,label]) => `<label><input type="radio" name="simpleTaskResult" value="${value}"> <span>${label}</span></label>`).join('')}</div><section class="hidden simple-task-retry" id="simpleTaskRetry"><h3 class="call-result-step">Когда продолжить работу?</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleRetry', 'Дата новой задачи', localDatePlus(1))}${manualTimeMarkup('simpleRetry', 'Время', '10:00')}</div></section><section class="hidden simple-task-appointment" id="simpleTaskAppointment"><h3 class="call-result-step">Дата и время приёма</h3><div class="custom-datetime-grid">${manualDateMarkup('simpleAppointment', 'Дата приёма', localDatePlus(1))}${manualTimeMarkup('simpleAppointment', 'Время', '10:00')}</div></section><section class="hidden outcome-extra" id="simpleDecisionFields"><label class="field"><span>По какому вопросу пациент принимает решение? *</span><input id="simpleDecisionSubject"></label><label class="field"><span>Причина *</span><select id="simpleDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="simpleDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="simpleDecisionOther"></textarea></label><div class="custom-datetime-grid">${manualDateMarkup('simpleDecision', 'Дата следующего контакта', localDatePlus(1))}${manualTimeMarkup('simpleDecision', 'Время следующего контакта', '10:00')}</div><label class="field"><span>Ответственный администратор *</span><select id="simpleDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Врач</span><select id="simpleDecisionDoctor"><option value="">Не указан</option>${DOCTORS.map(value => `<option>${esc(value)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="simpleDecisionService"></label></section><label class="field call-result-comment"><span>Примечание</span><textarea id="simpleTaskComment" placeholder="Необязательно"></textarea></label><section class="next-action-preview hidden" id="simpleNextActionPreview"><strong>✓ Следующее действие</strong><p></p></section><div class="dialog-actions"><button class="btn" data-close-simple-task>Отмена</button><button class="btn primary" id="saveSimpleTaskResult" disabled>Сохранить результат</button></div></div></div>`)
   const modal = document.querySelector('#simpleTaskExecutionModal')
   const close = () => modal.remove()
   modal.querySelectorAll('[data-close-simple-task]').forEach(button => button.onclick = close)
   closeOnBackdropClick(modal, close)
   setupManualDate(modal, 'simpleRetry'); setupManualTime(modal, 'simpleRetry')
   setupManualDate(modal, 'simpleAppointment'); setupManualTime(modal, 'simpleAppointment')
+  setupManualDate(modal, 'simpleDecision'); setupManualTime(modal, 'simpleDecision')
+  modal.querySelector('#simpleDecisionReasonCode').onchange = event => modal.querySelector('#simpleDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other')
   const saveButton = modal.querySelector('#saveSimpleTaskResult')
   modal.querySelectorAll('[name="simpleTaskResult"]').forEach(radio => radio.onchange = () => {
     const selected = config.results.find(([value]) => value === radio.value)
     modal.querySelector('#simpleTaskRetry').classList.toggle('hidden', !selected?.[2])
     modal.querySelector('#simpleTaskAppointment').classList.toggle('hidden', selected?.[3] !== 'appointment')
+    modal.querySelector('#simpleDecisionFields').classList.toggle('hidden', selected?.[3] !== 'decision')
     const preview = modal.querySelector('#simpleNextActionPreview')
     preview.classList.remove('hidden')
-    preview.querySelector('p').textContent = selected?.[3] === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : selected?.[2] ? 'Текущая задача закроется и будет создана новая задача на выбранное время' : 'Будет создано следующее действие, если у пациента нет других активных задач'
+    preview.querySelector('p').textContent = selected?.[3] === 'appointment' ? 'Будет создана задача: 📞 Подтвердить приём' : selected?.[3] === 'decision' ? 'Этап не изменится. Будет создана задача: 🤔 Уточнить решение' : selected?.[2] ? 'Текущая задача закроется и будет создана новая задача на выбранное время' : 'Будет создано следующее действие, если у пациента нет других активных задач'
     saveButton.disabled = false
   })
   saveButton.onclick = guardTaskResultSave(modal, () => {
@@ -2947,6 +3080,16 @@ function openSimpleTaskExecution(task, kind, options = {}) {
     const comment = modal.querySelector('#simpleTaskComment').value.trim()
     if (!selected) return
     const now = new Date().toISOString()
+    if (selected[3] === 'decision') {
+      const reasonCode = modal.querySelector('#simpleDecisionReasonCode').value
+      const reason = DECISION_REASONS.find(([reasonValue]) => reasonValue === reasonCode)?.[1] || ''
+      const formData = { subject:modal.querySelector('#simpleDecisionSubject').value.trim(), reasonCode, reason, otherReason:modal.querySelector('#simpleDecisionOther').value.trim(), dueDate:readManualDate(modal,'simpleDecision'), dueTime:readManualTime(modal,'simpleDecision'), assignee:modal.querySelector('#simpleDecisionAssignee').value, doctor:modal.querySelector('#simpleDecisionDoctor').value, service:modal.querySelector('#simpleDecisionService').value.trim(), comment }
+      const applied = applyDecisionOutcomeCore({ state,taskId:task.id,formData,actor:{id:currentUser.id,name:currentUser.name,now} })
+      state = applied.state
+      saveState(`Решение не принято: ${patient.name}`)
+      modal.remove(); finishCallResult(options); showToast('Создана задача «Уточнить решение».')
+      return
+    }
     if (selected[2]) {
       const dueDate = readManualDate(modal, 'simpleRetry')
       const dueTime = readManualTime(modal, 'simpleRetry')
@@ -2957,7 +3100,8 @@ function openSimpleTaskExecution(task, kind, options = {}) {
         : kind === 'checkup'
           ? (value === 'no_contact' ? { type:'call', title:'📞 Повторный звонок по профосмотру' } : { type:'reminder', title:'🔔 Напомнить о профосмотре' })
           : { type:task.type, title:task.title }
-      createWorkflowTask(patient, { ...continuation, dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' ') }, now)
+      const waitlistEntryId = task.waitlistEntryId || (kind === 'waitlist' ? activeWaitlistEntries().find(entry => entry.patientId === patient.id)?.id : null)
+      createWorkflowTask(patient, { ...continuation, dueDate, dueTime, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' '), workflowType:task.workflowType || kind, workflowId:task.workflowId || (waitlistEntryId ? `waitlist:${waitlistEntryId}` : `${kind}:${patient.id}:${task.id}`), parentTaskId:task.id, sourceEntityType:waitlistEntryId ? 'waitlist' : task.sourceEntityType || 'task', sourceEntityId:waitlistEntryId || task.sourceEntityId || task.id, ...(waitlistEntryId ? { waitlistEntryId } : {}), idempotencyKey:`continuation:${task.id}:${value}:${dueDate}T${dueTime}` }, now)
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task', `${selected[1]}. Создана новая задача на ${formatDate(dueDate)}, ${dueTime}.`, { actionIcon:taskIndicatorIcon(task), taskType:task.type }))
     } else {
@@ -2965,11 +3109,15 @@ function openSimpleTaskExecution(task, kind, options = {}) {
         const appointmentDate = readManualDate(modal, 'simpleAppointment')
         const appointmentTime = readManualTime(modal, 'simpleAppointment')
         if (!appointmentDate || !appointmentTime) return
+        const validation = validateFutureDateTime(appointmentDate, appointmentTime)
+        if (!validation.valid) return alert(validation.error)
+        if (!patient.doctors?.length) return alert('Сначала укажите врача в карточке пациента')
         patient.appointmentDate = appointmentDate
         patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`
         patient.status = '📅 Записан на приём'
         const deadline = appointmentConfirmationDeadline(appointmentDate)
-        createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}` }, now)
+        patient.appointmentId ||= uid()
+        createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
       }
       completeTaskRecord(task, now, selected[1], comment)
       patient.history ||= []
@@ -2979,9 +3127,9 @@ function openSimpleTaskExecution(task, kind, options = {}) {
         if (waitlistEntry) { waitlistEntry.status = 'removed'; waitlistEntry.removedAt = now; waitlistEntry.removedBy = currentUser.name }
         if (value === 'refused') patient.status = '❌ Отказ'
       }
-      ensureSimpleOutcomeContinuation(kind, value, patient, task, now)
+      if (selected[3] !== 'appointment') ensureSimpleOutcomeContinuation(kind, value, patient, task, now)
     }
-    if (!activePatientTasksExcept(patient.id, task.id).length) throw new Error('Результат не определил следующее действие для пациента')
+    if (!state.tasks.some(item => item.patientId === patient.id && item.id !== task.id && isTaskActive(item) && (item.parentTaskId === task.id || item.workflowId === task.workflowId || item.sourceEntityId === task.id))) throw new Error('Результат не определил связанное следующее действие для пациента')
     patient.updatedAt = now; patient.updatedBy = currentUser.name
     if (comment) patient.adminNote = comment
     saveState(`Сохранён результат задачи: ${task.title}`)
@@ -3014,7 +3162,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
     <div class="dialog-head"><div><h2 id="confirmationResultTitle">Подтвердить приём</h2><p>${esc(patient.name)} · приём ${formatDate(appointmentDate)} в ${appointmentTime}</p></div><button class="icon-btn" data-close-confirmation-result>×</button></div>
     <section><h3 class="call-result-step">Удалось дозвониться?</h3><div class="call-result-options"><label><input type="radio" name="confirmationReached" value="yes"> <span>Да</span></label><label><input type="radio" name="confirmationReached" value="no"> <span>Нет</span></label></div></section>
     <section class="hidden" id="confirmationNoContact"><h3 class="call-result-step">Когда позвонить снова?</h3><div class="custom-datetime-grid">${manualDateMarkup('confirmationCall', 'Дата следующего звонка', localDatePlus(1))}${manualTimeMarkup('confirmationCall', 'Время следующего звонка', '10:00')}</div><label class="field"><span>Комментарий</span><textarea id="confirmationNoComment" placeholder="Необязательно"></textarea></label></section>
-    <section class="hidden" id="confirmationReached"><h3 class="call-result-step">Подтвердил запись?</h3><div class="call-result-options"><label><input type="radio" name="appointmentConfirmed" value="yes" checked> <span>Да, запись подтверждена</span></label><label><input type="radio" name="appointmentConfirmed" value="no"> <span>Нет</span></label></div><div class="hidden" id="confirmationReschedule"><h3 class="call-result-step">Что сделать?</h3><div class="call-result-options compact-options"><label><input type="radio" name="confirmationNoAction" value="move" checked> <span>Перенести приём</span></label><label><input type="radio" name="confirmationNoAction" value="cancel"> <span>Отменить запись</span></label><label><input type="radio" name="confirmationNoAction" value="retry"> <span>Создать повторное подтверждение</span></label></div><div id="confirmationMoveFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationAppointment', 'Новая дата приёма', appointmentDate)}${manualTimeMarkup('confirmationAppointment', 'Новое время', appointmentTime)}</div></div><div class="hidden" id="confirmationRetryFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationRetry', 'Дата повторного подтверждения', localDatePlus(1))}${manualTimeMarkup('confirmationRetry', 'Время', '10:00')}</div></div><label class="field"><span>Комментарий</span><textarea id="confirmationMoveComment" placeholder="Необязательно"></textarea></label></div></section>
+    <section class="hidden" id="confirmationReached"><h3 class="call-result-step">Подтвердил запись?</h3><div class="call-result-options"><label><input type="radio" name="appointmentConfirmed" value="yes" checked> <span>Да, запись подтверждена</span></label><label><input type="radio" name="appointmentConfirmed" value="no"> <span>Нет</span></label></div><div class="hidden" id="confirmationReschedule"><h3 class="call-result-step">Что сделать?</h3><div class="call-result-options compact-options"><label><input type="radio" name="confirmationNoAction" value="move" checked> <span>Перенести приём</span></label><label><input type="radio" name="confirmationNoAction" value="cancel"> <span>Отменить запись</span></label><label><input type="radio" name="confirmationNoAction" value="retry"> <span>Создать повторное подтверждение</span></label></div><div id="confirmationMoveFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationAppointment', 'Новая дата приёма', appointmentDate)}${manualTimeMarkup('confirmationAppointment', 'Новое время', appointmentTime)}</div><label class="field"><span>Врач</span><select id="confirmationDoctor"><option value="">Выберите врача</option>${DOCTORS.map(value => `<option>${esc(value)}</option>`).join('')}</select></label></div><div class="hidden" id="confirmationRetryFields"><div class="custom-datetime-grid">${manualDateMarkup('confirmationRetry', 'Дата повторного подтверждения', localDatePlus(1))}${manualTimeMarkup('confirmationRetry', 'Время', '10:00')}</div></div><div class="hidden" id="confirmationCancelFields"><label class="field"><span>Следующее действие после отмены</span><select id="confirmationCancelOutcome"><option value="decision">Решение не принято</option><option value="later">Связаться позже</option><option value="refusal">Отказ — контроль позже</option><option value="do_not_call">Не звонить</option></select></label><section id="confirmationCancelDecisionFields"><label class="field"><span>По какому вопросу пациент принимает решение? *</span><input id="confirmationDecisionSubject"></label><label class="field"><span>Причина *</span><select id="confirmationDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="confirmationDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="confirmationDecisionOther"></textarea></label><label class="field"><span>Ответственный администратор *</span><select id="confirmationDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="confirmationDecisionService"></label></section><div class="custom-datetime-grid" id="confirmationCancelDateTime">${manualDateMarkup('confirmationCancel', 'Дата следующего контакта', localDatePlus(1))}${manualTimeMarkup('confirmationCancel', 'Время', '10:00')}</div><label class="field"><span>Причина отмены / комментарий *</span><textarea id="confirmationCancelReason"></textarea></label></div><label class="field"><span>Комментарий</span><textarea id="confirmationMoveComment" placeholder="Необязательно"></textarea></label></div></section>
     <div class="dialog-actions"><button class="btn" data-close-confirmation-result>Отмена</button><button class="btn primary" id="saveConfirmationResult" disabled>Сохранить</button></div>
   </div></div>`)
   const modal = document.querySelector('#appointmentConfirmationResult')
@@ -3027,6 +3175,8 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
   setupManualTime(modal, 'confirmationAppointment')
   setupManualDate(modal, 'confirmationRetry')
   setupManualTime(modal, 'confirmationRetry')
+  setupManualDate(modal, 'confirmationCancel')
+  setupManualTime(modal, 'confirmationCancel')
   const saveButton = modal.querySelector('#saveConfirmationResult')
   modal.querySelectorAll('[name="confirmationReached"]').forEach(radio => radio.onchange = () => {
     const reached = radio.value === 'yes'
@@ -3038,7 +3188,13 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
   modal.querySelectorAll('[name="confirmationNoAction"]').forEach(radio => radio.onchange = () => {
     modal.querySelector('#confirmationMoveFields').classList.toggle('hidden', radio.value !== 'move')
     modal.querySelector('#confirmationRetryFields').classList.toggle('hidden', radio.value !== 'retry')
+    modal.querySelector('#confirmationCancelFields').classList.toggle('hidden', radio.value !== 'cancel')
   })
+  modal.querySelector('#confirmationCancelOutcome').onchange = event => {
+    modal.querySelector('#confirmationCancelDateTime').classList.toggle('hidden', event.target.value === 'do_not_call')
+    modal.querySelector('#confirmationCancelDecisionFields').classList.toggle('hidden', event.target.value !== 'decision')
+  }
+  modal.querySelector('#confirmationDecisionReasonCode').onchange = event => modal.querySelector('#confirmationDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other')
   saveButton.onclick = guardTaskResultSave(modal, () => {
     const reached = modal.querySelector('[name="confirmationReached"]:checked')?.value
     if (!reached) return
@@ -3048,47 +3204,91 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
       const dueDate = readManualDate(modal, 'confirmationCall')
       const dueTime = readManualTime(modal, 'confirmationCall')
       if (!dueDate || !dueTime) return
+      const validation = validateFutureDateTime(dueDate, dueTime)
+      if (!validation.valid) return alert(validation.error)
       const comment = modal.querySelector('#confirmationNoComment').value.trim()
       completeTaskRecord(task, now, 'Не дозвонились', comment)
-      createActionTask(patient, { type:'call', title:'📞 Позвонить', dueDate, dueAt:`${dueDate}T${dueTime}:00`, comment }, now)
+      const appointmentId = patient.appointmentId || task.appointmentId || uid(); patient.appointmentId = appointmentId
+      createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate, dueTime, comment, appointmentId, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, idempotencyKey:`appointment-confirmation:${appointmentId}:${dueDate}T${dueTime}` }, now)
       if (comment) patient.adminNote = comment
       patient.history.unshift(createHistoryEntry('action', `Не дозвонились. Позвонить ${formatDate(dueDate)} в ${dueTime}${comment ? `. ${comment}` : ''}.`, { actionIcon:'📞', taskType:'call' }))
     } else {
       const confirmed = modal.querySelector('[name="appointmentConfirmed"]:checked')?.value !== 'no'
       if (confirmed) {
         completeTaskRecord(task, now, 'Приём подтверждён')
+        const appointmentId = patient.appointmentId || task.appointmentId || uid()
+        patient.appointmentId = appointmentId
+        const resultAt = validateFutureDateTime(appointmentDate, appointmentTime, { defaultTime:'10:00' }).valid ? appointmentTime : localDateTimeValue(new Date(Date.now() + 5 * 60000)).slice(11,16)
+        const resultDate = validateFutureDateTime(appointmentDate, resultAt).valid ? appointmentDate : localDateTimeValue(new Date(Date.now() + 5 * 60000)).slice(0,10)
+        createWorkflowTask(patient, { type:'control', title:'Проверить результат приёма', dueDate:resultDate, dueTime:resultAt, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, appointmentId, idempotencyKey:`appointment-result:${appointmentId}` }, now)
         patient.history.unshift(createHistoryEntry('action', `Подтвердила приём на ${formatDate(appointmentDate)} в ${appointmentTime}.`, { actionIcon:'📞', taskType:'call' }))
       } else {
         const noAction = modal.querySelector('[name="confirmationNoAction"]:checked')?.value || 'move'
         const comment = modal.querySelector('#confirmationMoveComment').value.trim()
         if (noAction === 'cancel') {
+          const cancelOutcome = modal.querySelector('#confirmationCancelOutcome').value
+          const cancelReason = modal.querySelector('#confirmationCancelReason').value.trim()
+          if (!cancelReason) return alert('Укажите причину отмены и следующего действия')
+          if (cancelOutcome === 'do_not_call') {
+            const draft = cloneData(state)
+            finalizePatientAsDoNotContactCore(draft, patient.id, cancelReason, { id:currentUser.id, name:currentUser.name, now })
+            state = draft; saveState(`Не звонить: ${patient.name}`); modal.remove(); finishCallResult(options); return
+          }
+          const nextDate = readManualDate(modal, 'confirmationCancel')
+          const nextTime = readManualTime(modal, 'confirmationCancel')
+          const validation = validateFutureDateTime(nextDate, nextTime)
+          if (!validation.valid) return alert(validation.error)
+          if (cancelOutcome === 'decision') {
+            const reasonCode = modal.querySelector('#confirmationDecisionReasonCode').value
+            const decisionReason = DECISION_REASONS.find(([value]) => value === reasonCode)?.[1] || ''
+            const decisionDraft = cloneData(state)
+            const decisionPatient = decisionDraft.patients.find(item => item.id === patient.id)
+            decisionPatient.appointmentDate = ''
+            decisionPatient.appointmentAt = null
+            decisionPatient.status = '🆕 Новый'
+            const applied = applyDecisionOutcomeCore({ state:decisionDraft,taskId:task.id,actor:{id:currentUser.id,name:currentUser.name,now},formData:{ subject:modal.querySelector('#confirmationDecisionSubject').value.trim(), reasonCode, reason:decisionReason, otherReason:modal.querySelector('#confirmationDecisionOther').value.trim(), dueDate:nextDate, dueTime:nextTime, assignee:modal.querySelector('#confirmationDecisionAssignee').value, doctor:patient.doctors?.[0] || '', service:modal.querySelector('#confirmationDecisionService').value.trim(), comment:[cancelReason,comment].filter(Boolean).join('. ') } })
+            const savedPatient = applied.state.patients.find(item => item.id === patient.id)
+            savedPatient.history.unshift(createHistoryEntry('action', `Запись на ${formatDate(appointmentDate)} в ${appointmentTime} отменена. ${cancelReason}.`, { actionIcon:'📅', taskType:'appointment' }))
+            state = applied.state
+            saveState(`Запись отменена, решение не принято: ${patient.name}`)
+            modal.remove(); finishCallResult(options); showToast('Создана задача «Уточнить решение».'); return
+          }
           completeTaskRecord(task, now, 'Запись отменена', comment)
           patient.appointmentDate = ''
           patient.appointmentAt = null
-          patient.status = '🤔 Думает'
+          patient.status = cancelOutcome === 'refusal' ? '❌ Отказ' : '🆕 Новый'
+          const nextType = cancelOutcome === 'decision' ? 'decision' : cancelOutcome === 'later' ? 'call' : 'call'
+          const nextTitle = cancelOutcome === 'decision' ? 'Уточнить решение' : cancelOutcome === 'later' ? 'Связаться позже' : 'Контрольный контакт после отказа'
+          createWorkflowTask(patient, { type:nextType, title:nextTitle, dueDate:nextDate, dueTime:nextTime, comment:cancelReason, workflowType:'appointment-cancel', workflowId:`appointment-cancel:${task.id}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId || task.id, idempotencyKey:`appointment-cancel:${task.id}:${cancelOutcome}` }, now)
           patient.history.unshift(createHistoryEntry('action', `Запись на ${formatDate(appointmentDate)} в ${appointmentTime} отменена${comment ? `. ${comment}` : ''}.`, { actionIcon:'📅', taskType:'appointment' }))
         } else if (noAction === 'retry') {
           const retryDate = readManualDate(modal, 'confirmationRetry')
           const retryTime = readManualTime(modal, 'confirmationRetry')
           if (!retryDate || !retryTime) return
           completeTaskRecord(task, now, 'Назначено повторное подтверждение', comment)
-          createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:retryDate, dueAt:`${retryDate}T${retryTime}:00`, comment }, now)
+          const validation = validateFutureDateTime(retryDate, retryTime)
+          if (!validation.valid) return alert(validation.error)
+          const appointmentId = patient.appointmentId || task.appointmentId || uid(); patient.appointmentId = appointmentId
+          createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:retryDate, dueTime:retryTime, comment, appointmentId, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, idempotencyKey:`appointment-confirmation:${appointmentId}:${retryDate}T${retryTime}` }, now)
           patient.history.unshift(createHistoryEntry('task', `Повторно подтвердить приём ${formatDate(retryDate)} в ${retryTime}.`, { taskType:'call', actionIcon:'📞' }))
         } else {
         const newDate = readManualDate(modal, 'confirmationAppointment')
         const newTime = readManualTime(modal, 'confirmationAppointment')
         if (!newDate || !newTime) return
+        const doctor = modal.querySelector('#confirmationDoctor').value
+        if (!doctor) return alert('Выберите врача')
+        const validation = validateFutureDateTime(newDate, newTime)
+        if (!validation.valid) return alert(validation.error)
         completeTaskRecord(task, now, 'Приём перенесён', comment)
         if (comment) patient.adminNote = comment
         patient.appointmentDate = newDate
         patient.appointmentAt = `${newDate}T${newTime}:00`
+        patient.doctors = [doctor]
         const historyText = `Подтвердила разговор. Приём перенесён с ${formatDate(appointmentDate)} ${appointmentTime} на ${formatDate(newDate)} ${newTime}${comment ? `. ${comment}` : ''}.`
         patient.history.unshift(createHistoryEntry('action', historyText, { actionIcon:'📞', taskType:'call' }))
-        if (newDate > todayISO()) {
-          const deadline = appointmentConfirmationDeadline(newDate)
-          const duplicate = state.tasks.some(item => item.patientId === patient.id && isTaskActive(item) && isAppointmentConfirmationTask(item) && item.dueDate === deadline.dueDate)
-          if (!duplicate) createActionTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:'Подтвердить приём' }, now)
-        }
+        const appointmentId = uid(); patient.appointmentId = appointmentId
+        const deadline = appointmentConfirmationDeadline(newDate)
+        createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:'Подтвердить приём', appointmentId, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, idempotencyKey:`appointment-confirmation:${appointmentId}` }, now)
         }
       }
     }
@@ -3125,11 +3325,11 @@ function openCallResultModal(taskId, options = {}) {
     <div class="today-later-options hidden" id="todayLaterOptions"><button type="button" data-later="minutes:120">Через 2 часа</button><button type="button" data-later="time:15:00">15:00</button><button type="button" data-later="time:17:00">17:00</button>${manualTimeMarkup('laterManual', 'Другое время сегодня', '')}</div>
     <div class="custom-call-date hidden" id="customCallDate"><div class="custom-datetime-grid">${manualDateMarkup('callResult', 'Дата', '')}${manualTimeMarkup('callResult', 'Время', '10:00')}</div></div>
     <div class="selected-followup" id="selectedFollowup"></div></section>
-    <section class="contact-outcome hidden" id="contactOutcome"><h3 class="call-result-step">2. Чем завершился разговор?</h3><label class="field"><span>Итог разговора</span><select id="contactOutcomeStatus"><option value="">Выберите результат</option><option value="appointment">📅 Записан на приём</option><option value="reminder">🔔 Создать напоминание</option><option value="thinking">🤔 Думает</option><option value="treatment">🦷 На лечении</option><option value="treatment_completed">✅ Лечение завершено</option><option value="checkup_status">🔄 Профосмотр</option><option value="refusal">❌ Отказ</option><option value="do_not_call">🚫 Не звонить</option><option value="other">Другое</option></select></label>
+    <section class="contact-outcome hidden" id="contactOutcome"><h3 class="call-result-step">2. Чем завершился разговор?</h3><label class="field"><span>Итог разговора</span><select id="contactOutcomeStatus"><option value="">Выберите результат</option><option value="appointment">📅 Записан на приём</option><option value="reminder">🔔 Создать напоминание</option><option value="decision">🤔 Решение не принято</option><option value="treatment">🦷 На лечении</option><option value="treatment_completed">✅ Лечение завершено</option><option value="checkup_status">🔄 Профосмотр</option><option value="refusal">❌ Отказ</option><option value="do_not_call">🚫 Не звонить</option><option value="other">Другое</option></select></label>
       <div class="outcome-extra hidden" id="appointmentOutcome"><div class="custom-datetime-grid">${manualDateMarkup('outcomeAppointment', 'Дата приёма', '')}${manualTimeMarkup('outcomeAppointment', 'Время приёма', '10:00')}</div><label class="field"><span>Врач</span><select id="outcomeDoctor">${DOCTORS.map(doctor => `<option>${esc(doctor)}</option>`).join('')}</select></label></div>
       <div class="outcome-extra hidden" id="reminderOutcome"><div class="custom-datetime-grid">${manualDateMarkup('outcomeReminder', 'Дата напоминания', '')}${manualTimeMarkup('outcomeReminder', 'Время', '10:00')}</div><label class="field"><span>Кому</span><select id="outcomeReminderTarget"><option value="patient">Пациенту</option><option value="doctor">Доктору</option></select></label><label class="field"><span>Текст напоминания</span><textarea id="outcomeReminderText"></textarea></label></div>
-      <div class="outcome-extra hidden" id="thinkingOutcome"><div class="custom-datetime-grid">${manualDateMarkup('outcomeThinking', 'Когда напомнить', localDatePlus(1))}${manualTimeMarkup('outcomeThinking', 'Время', '10:00')}</div></div>
-      <div class="outcome-extra hidden" id="checkupOutcome"><label class="field"><span>Результат профосмотра</span><select id="checkupOutcomeResult"><option value="">Выберите результат</option><option value="appointment">Записали</option><option value="thinking">Думает</option><option value="refusal">Отказ</option><option value="no_contact">Не дозвонились</option></select></label><div class="hidden custom-datetime-grid" id="checkupAppointmentFields">${manualDateMarkup('checkupAppointment', 'Дата приёма', localDatePlus(1))}${manualTimeMarkup('checkupAppointment', 'Время', '10:00')}</div><div class="hidden custom-datetime-grid" id="checkupFollowupFields">${manualDateMarkup('checkupFollowup', 'Когда связаться', localDatePlus(1))}${manualTimeMarkup('checkupFollowup', 'Время', '10:00')}</div></div>
+      <div class="outcome-extra hidden" id="decisionOutcome"><label class="field"><span>По какому вопросу пациент принимает решение? *</span><input id="outcomeDecisionSubject" placeholder="Например, имплантация"></label><label class="field"><span>Причина, почему решение не принято *</span><select id="outcomeDecisionReasonCode"><option value="">Выберите причину</option>${DECISION_REASONS.map(([value,label]) => `<option value="${value}">${esc(label)}</option>`).join('')}</select></label><label class="field hidden" id="outcomeDecisionOtherField"><span>Комментарий к причине «Другое» *</span><textarea id="outcomeDecisionOther"></textarea></label><div class="custom-datetime-grid">${manualDateMarkup('outcomeDecision', 'Дата следующего контакта', localDatePlus(1))}${manualTimeMarkup('outcomeDecision', 'Время следующего контакта', '10:00')}</div><label class="field"><span>Ответственный администратор *</span><select id="outcomeDecisionAssignee"><option value="">Выберите ответственного</option>${USERS.filter(user => user.role === 'admin').map(user => `<option value="${esc(user.name)}" ${user.id === currentUser.id ? 'selected' : ''}>${esc(user.name)}</option>`).join('')}</select></label><label class="field"><span>Врач</span><select id="outcomeDecisionDoctor"><option value="">Не указан</option>${DOCTORS.map(doctor => `<option>${esc(doctor)}</option>`).join('')}</select></label><label class="field"><span>Услуга или направление</span><input id="outcomeDecisionService"></label><label class="field"><span>Последнее обещание пациента</span><input id="outcomeDecisionPromise"></label><label class="field"><span>Свободный комментарий</span><textarea id="outcomeDecisionComment"></textarea></label></div>
+      <div class="outcome-extra hidden" id="checkupOutcome"><label class="field"><span>Результат профосмотра</span><select id="checkupOutcomeResult"><option value="">Выберите результат</option><option value="appointment">Записали</option><option value="decision">Решение не принято</option><option value="refusal">Отказ</option><option value="no_contact">Не дозвонились</option></select></label><div class="hidden custom-datetime-grid" id="checkupAppointmentFields">${manualDateMarkup('checkupAppointment', 'Дата приёма', localDatePlus(1))}${manualTimeMarkup('checkupAppointment', 'Время', '10:00')}</div><div class="hidden custom-datetime-grid" id="checkupFollowupFields">${manualDateMarkup('checkupFollowup', 'Когда связаться', localDatePlus(1))}${manualTimeMarkup('checkupFollowup', 'Время', '10:00')}</div></div>
       <div class="outcome-extra hidden" id="refusalOutcome"><label class="field"><span>Причина отказа</span><select id="outcomeRefusalReason"><option value="">Выберите причину</option>${REFUSAL_REASONS.map(item => `<option value="${item.value}">${item.option}</option>`).join('')}</select></label><label class="field hidden" id="outcomeOtherRefusalField"><span>Описание причины</span><textarea id="outcomeOtherRefusal"></textarea></label></div>
       <div class="outcome-extra hidden" id="doNotCallOutcome"><label class="field"><span>Причина</span><input id="outcomeDoNotCallReason"></label></div>
       <div class="outcome-extra hidden" id="otherOutcome"><p class="settings-note">Для варианта «Другое» примечание обязательно, затем нужно назначить следующую связь.</p><input type="hidden" id="outcomeOtherAction" value="repeat"></div>
@@ -3169,7 +3369,7 @@ function openCallResultModal(taskId, options = {}) {
       return showNextAction(`Будет создана задача: 📞 Подтвердить приём · ${formatDate(deadline.dueDate)} ${deadline.dueAt.slice(11,16)}`)
     }
     if (status === 'reminder') return showNextAction(modal.querySelector('#outcomeReminderDate').value ? `Будет создана задача: 🔔 Напомнить · ${formatDate(modal.querySelector('#outcomeReminderDate').value)} ${modal.querySelector('#outcomeReminderTime').value}` : 'Укажите дату напоминания')
-    if (status === 'thinking') return showNextAction(`Будет создана задача: 🔔 Напомнить пациенту · ${formatDate(modal.querySelector('#outcomeThinkingDate').value)} ${modal.querySelector('#outcomeThinkingTime').value}`)
+    if (status === 'decision') return showNextAction(`Этап не изменится. Будет создана задача: 🤔 Уточнить решение · ${formatDate(modal.querySelector('#outcomeDecisionDate').value)} ${modal.querySelector('#outcomeDecisionTime').value}`)
     if (status === 'treatment') return showNextAction(activePatientTasksExcept(patient.id, task.id).length ? 'Активные задачи пациента сохранятся; новая задача не дублируется' : `Будет создана задача: 🪡 Первый контроль лечения · ${formatDate(localDatePlus(Number(settings.treatmentControlDays) || 7))} 10:00`)
     if (status === 'treatment_completed') return showNextAction(`Будет создана задача: 🦷 Профосмотр · ${formatDate(dateAfterMonths(Number(settings.checkupAfterTreatmentMonths) || 6))} 10:00`)
     if (status === 'refusal') return showNextAction(`Будет создана задача: 📞 Контрольный контакт · ${formatDate(dateAfterMonths(Number(settings.refusalFollowupMonths) || 6))} 10:00`)
@@ -3178,7 +3378,7 @@ function openCallResultModal(taskId, options = {}) {
       const sub = modal.querySelector('#checkupOutcomeResult').value
       if (!sub) return showNextAction('Выберите результат профосмотра')
       if (sub === 'appointment') return showNextAction(`Будет создана задача: 📞 Подтвердить приём · после выбора даты визита`)
-      if (sub === 'thinking') return showNextAction(`Будет создана задача: 🔔 Напомнить · ${formatDate(modal.querySelector('#checkupFollowupDate').value)} ${modal.querySelector('#checkupFollowupTime').value}`)
+      if (sub === 'decision') return showNextAction(`Этап не изменится. Будет создана задача: 🤔 Уточнить решение · ${formatDate(modal.querySelector('#outcomeDecisionDate').value)} ${modal.querySelector('#outcomeDecisionTime').value}`)
       if (sub === 'no_contact') return showNextAction(`Будет создана задача: 📞 Повторный звонок · ${formatDate(modal.querySelector('#checkupFollowupDate').value)} ${modal.querySelector('#checkupFollowupTime').value}`)
       return showNextAction(`Будет создана задача: 📞 Контрольный контакт · ${formatDate(dateAfterMonths(Number(settings.refusalFollowupMonths) || 6))} 10:00`)
     }
@@ -3192,12 +3392,20 @@ function openCallResultModal(taskId, options = {}) {
       valid = Boolean(outcomeStatus.value)
       if (outcomeStatus.value === 'appointment') valid = Boolean(modal.querySelector('#outcomeAppointmentDate').value && modal.querySelector('#outcomeAppointmentTime').value)
       if (outcomeStatus.value === 'reminder') valid = Boolean(modal.querySelector('#outcomeReminderDate').value && modal.querySelector('#outcomeReminderTime').value && modal.querySelector('#outcomeReminderText').value.trim())
-      if (outcomeStatus.value === 'thinking') valid = Boolean(modal.querySelector('#outcomeThinkingDate').value && modal.querySelector('#outcomeThinkingTime').value)
+      if (outcomeStatus.value === 'decision') {
+        const reasonCode = modal.querySelector('#outcomeDecisionReasonCode').value
+        valid = Boolean(modal.querySelector('#outcomeDecisionSubject').value.trim() && reasonCode && modal.querySelector('#outcomeDecisionDate').value && modal.querySelector('#outcomeDecisionTime').value && modal.querySelector('#outcomeDecisionAssignee').value && (reasonCode !== 'other' || modal.querySelector('#outcomeDecisionOther').value.trim()))
+      }
+      if (outcomeStatus.value === 'do_not_call') valid = Boolean(modal.querySelector('#outcomeDoNotCallReason').value.trim())
       if (outcomeStatus.value === 'checkup_status') {
         const checkupResult = modal.querySelector('#checkupOutcomeResult').value
         valid = Boolean(checkupResult)
         if (checkupResult === 'appointment') valid = Boolean(modal.querySelector('#checkupAppointmentDate').value && modal.querySelector('#checkupAppointmentTime').value)
-        if (['thinking','no_contact'].includes(checkupResult)) valid = Boolean(modal.querySelector('#checkupFollowupDate').value && modal.querySelector('#checkupFollowupTime').value)
+        if (checkupResult === 'no_contact') valid = Boolean(modal.querySelector('#checkupFollowupDate').value && modal.querySelector('#checkupFollowupTime').value)
+        if (checkupResult === 'decision') {
+          const reasonCode = modal.querySelector('#outcomeDecisionReasonCode').value
+          valid = Boolean(modal.querySelector('#outcomeDecisionSubject').value.trim() && reasonCode && modal.querySelector('#outcomeDecisionDate').value && modal.querySelector('#outcomeDecisionTime').value && modal.querySelector('#outcomeDecisionAssignee').value && (reasonCode !== 'other' || modal.querySelector('#outcomeDecisionOther').value.trim()))
+        }
       }
       if (outcomeStatus.value === 'other') valid = Boolean(modal.querySelector('#callResultComment').value.trim()) && (modal.querySelector('#outcomeOtherAction').value !== 'repeat' || Boolean(selectedFollowup))
     } else if (result) valid = Boolean(selectedFollowup)
@@ -3210,8 +3418,8 @@ function openCallResultModal(taskId, options = {}) {
   setupManualTime(modal, 'outcomeAppointment')
   setupManualDate(modal, 'outcomeReminder', updateSaveState)
   setupManualTime(modal, 'outcomeReminder')
-  setupManualDate(modal, 'outcomeThinking', updateSaveState)
-  setupManualTime(modal, 'outcomeThinking')
+  setupManualDate(modal, 'outcomeDecision', updateSaveState)
+  setupManualTime(modal, 'outcomeDecision')
   setupManualDate(modal, 'checkupAppointment', updateSaveState)
   setupManualTime(modal, 'checkupAppointment')
   setupManualDate(modal, 'checkupFollowup', updateSaveState)
@@ -3234,7 +3442,7 @@ function openCallResultModal(taskId, options = {}) {
     const value = outcomeStatus.value
     modal.querySelector('#appointmentOutcome').classList.toggle('hidden', value !== 'appointment')
     modal.querySelector('#reminderOutcome').classList.toggle('hidden', value !== 'reminder')
-    modal.querySelector('#thinkingOutcome').classList.toggle('hidden', value !== 'thinking')
+    modal.querySelector('#decisionOutcome').classList.toggle('hidden', value !== 'decision')
     modal.querySelector('#checkupOutcome').classList.toggle('hidden', value !== 'checkup_status')
     modal.querySelector('#refusalOutcome').classList.toggle('hidden', value !== 'refusal')
     modal.querySelector('#doNotCallOutcome').classList.toggle('hidden', value !== 'do_not_call')
@@ -3246,10 +3454,12 @@ function openCallResultModal(taskId, options = {}) {
   outcomeStatus.onchange = updateOutcome
   modal.querySelector('#checkupOutcomeResult').onchange = event => {
     modal.querySelector('#checkupAppointmentFields').classList.toggle('hidden', event.target.value !== 'appointment')
-    modal.querySelector('#checkupFollowupFields').classList.toggle('hidden', !['thinking','no_contact'].includes(event.target.value))
+    modal.querySelector('#checkupFollowupFields').classList.toggle('hidden', event.target.value !== 'no_contact')
+    modal.querySelector('#decisionOutcome').classList.toggle('hidden', event.target.value !== 'decision')
     updateSaveState()
   }
   modal.querySelector('#outcomeRefusalReason').onchange = event => modal.querySelector('#outcomeOtherRefusalField').classList.toggle('hidden', event.target.value !== 'other')
+  modal.querySelector('#outcomeDecisionReasonCode').onchange = event => { modal.querySelector('#outcomeDecisionOtherField').classList.toggle('hidden', event.target.value !== 'other'); updateSaveState() }
   modal.querySelector('#outcomeOtherAction').onchange = updateOutcome
   modal.querySelector('#outcomeAppointmentDate').onchange = event => { modal.querySelector('#outcomeAppointmentDateText').value = event.target.value ? formatDate(event.target.value) : ''; updateSaveState() }
   modal.querySelector('#outcomeAppointmentDateText').onblur = event => { const parsed = parseManualDate(event.target.value); if (!parsed.error && parsed.iso) { event.target.value = parsed.formatted; modal.querySelector('#outcomeAppointmentDate').value = parsed.iso } updateSaveState() }
@@ -3351,11 +3561,19 @@ function collectContactOutcome(modal, status) {
     if (!reminderDate || !reminderTime) return null
     return { status, reminderDate, reminderTime, reminderTarget:modal.querySelector('#outcomeReminderTarget').value, reminderText:modal.querySelector('#outcomeReminderText').value.trim() }
   }
-  if (status === 'thinking') {
-    const reminderDate = readManualDate(modal, 'outcomeThinking')
-    const reminderTime = readManualTime(modal, 'outcomeThinking')
+  if (status === 'decision') {
+    const reminderDate = readManualDate(modal, 'outcomeDecision')
+    const reminderTime = readManualTime(modal, 'outcomeDecision')
     if (!reminderDate || !reminderTime) return null
-    return { status, patientStatus:'🤔 Думает', reminderDate, reminderTime, reminderTarget:'patient', reminderText:'Напомнить пациенту' }
+    const subject = modal.querySelector('#outcomeDecisionSubject').value.trim()
+    const reasonCode = modal.querySelector('#outcomeDecisionReasonCode').value
+    const reason = DECISION_REASONS.find(([value]) => value === reasonCode)?.[1] || ''
+    const otherReason = modal.querySelector('#outcomeDecisionOther').value.trim()
+    const assignee = modal.querySelector('#outcomeDecisionAssignee').value
+    const validation = validateFutureDateTime(reminderDate, reminderTime)
+    if (!subject || !reason || !assignee || (reasonCode === 'other' && !otherReason)) return null
+    if (!validation.valid) { alert(validation.error); return null }
+    return { status, reminderDate, reminderTime, subject, reasonCode, reason, otherReason, assignee, doctor:modal.querySelector('#outcomeDecisionDoctor').value, service:modal.querySelector('#outcomeDecisionService').value.trim(), lastPromise:modal.querySelector('#outcomeDecisionPromise').value.trim(), decisionComment:modal.querySelector('#outcomeDecisionComment').value.trim() }
   }
   if (status === 'checkup_status') {
     const checkupResult = modal.querySelector('#checkupOutcomeResult').value
@@ -3366,11 +3584,24 @@ function collectContactOutcome(modal, status) {
       if (!appointmentDate || !appointmentTime) return null
       return { status, checkupResult, patientStatus:'📅 Записан на приём', appointmentDate, appointmentTime }
     }
-    if (['thinking','no_contact'].includes(checkupResult)) {
+    if (checkupResult === 'decision') {
+      const reminderDate = readManualDate(modal, 'outcomeDecision')
+      const reminderTime = readManualTime(modal, 'outcomeDecision')
+      const subject = modal.querySelector('#outcomeDecisionSubject').value.trim()
+      const reasonCode = modal.querySelector('#outcomeDecisionReasonCode').value
+      const reason = DECISION_REASONS.find(([value]) => value === reasonCode)?.[1] || ''
+      const otherReason = modal.querySelector('#outcomeDecisionOther').value.trim()
+      const assignee = modal.querySelector('#outcomeDecisionAssignee').value
+      const validation = validateFutureDateTime(reminderDate, reminderTime)
+      if (!validation.valid) { alert(validation.error); return null }
+      if (!subject || !reason || !assignee || (reasonCode === 'other' && !otherReason)) return null
+      return { status:'decision', reminderDate, reminderTime, subject, reasonCode, reason, otherReason, assignee, doctor:modal.querySelector('#outcomeDecisionDoctor').value, service:modal.querySelector('#outcomeDecisionService').value.trim(), lastPromise:modal.querySelector('#outcomeDecisionPromise').value.trim(), decisionComment:modal.querySelector('#outcomeDecisionComment').value.trim() }
+    }
+    if (checkupResult === 'no_contact') {
       const followupDate = readManualDate(modal, 'checkupFollowup')
       const followupTime = readManualTime(modal, 'checkupFollowup')
       if (!followupDate || !followupTime) return null
-      return { status, checkupResult, patientStatus:'🔄 Профосмотр', followupDate, followupTime }
+      return { status, checkupResult, followupDate, followupTime }
     }
     return { status, checkupResult, patientStatus:'❌ Отказ' }
   }
@@ -3381,7 +3612,11 @@ function collectContactOutcome(modal, status) {
     if (!refusalReason || (refusalReasonCode === 'other' && !refusalReasonDetails)) { alert(refusalReason ? 'Опишите другую причину' : 'Выберите причину отказа'); return null }
     return { status, patientStatus:'❌ Отказ', refusalReason:refusalReason.label, refusalReasonCode, refusalReasonDetails }
   }
-  if (status === 'do_not_call') return { status, patientStatus:'🚫 Не звонить', refusalReason:modal.querySelector('#outcomeDoNotCallReason').value.trim() }
+  if (status === 'do_not_call') {
+    const refusalReason = modal.querySelector('#outcomeDoNotCallReason').value.trim()
+    if (!refusalReason) { alert('Укажите причину «Не звонить»'); return null }
+    return { status, patientStatus:'🚫 Не звонить', refusalReason }
+  }
   const statuses = { treatment:'🦷 На лечении', treatment_completed:'✅ Лечение завершено' }
   if (statuses[status]) return { status, patientStatus:statuses[status] }
   if (status === 'other') return { status:'Другое' }
@@ -3389,7 +3624,31 @@ function collectContactOutcome(modal, status) {
 }
 
 function applyCallResult(task, patient, result, followup, comment, outcome = null) {
+  if (['completed','messenger'].includes(result) && outcome?.status === 'do_not_call') {
+    const draft = cloneData(state)
+    finalizePatientAsDoNotContactCore(draft, patient.id, outcome.refusalReason || comment, { id:currentUser.id, name:currentUser.name })
+    state = draft
+    saveState(`Не звонить: ${patient.name}`)
+    return
+  }
+  if (['completed','messenger'].includes(result) && outcome?.status === 'decision') {
+    const applied = applyDecisionOutcomeCore({
+      state,
+      taskId:task.id,
+      actor:{ id:currentUser.id, name:currentUser.name, now:new Date().toISOString() },
+      formData:{
+        subject:outcome.subject, reasonCode:outcome.reasonCode, reason:outcome.reason, otherReason:outcome.otherReason,
+        dueDate:outcome.reminderDate, dueTime:outcome.reminderTime, assignee:outcome.assignee,
+        doctor:outcome.doctor, service:outcome.service, comment:[outcome.decisionComment, comment].filter(Boolean).join('. '),
+        lastPromise:outcome.lastPromise,
+      },
+    })
+    state = applied.state
+    saveState(`Решение не принято: ${patient.name}`)
+    return
+  }
   const attemptedAt = new Date().toISOString()
+  const continuationMeta = { workflowType:task.workflowType || 'contact', workflowId:task.workflowId || `contact:${patient.id}:${task.id}`, parentTaskId:task.id, sourceEntityType:task.sourceEntityType || 'task', sourceEntityId:task.sourceEntityId || task.id }
   const previousDueDate = task.dueDate || ''
   const previousDueAt = task.dueAt || null
   const resultLabels = { completed: 'Дозвонились', no_contact: 'Не дозвонились', requested: 'Пациент попросил перезвонить', unavailable: 'Номер недоступен / выключен', rejected: 'Сбросил звонок', messenger: 'Связались в мессенджере', messenger_no_reply:'В мессенджере не отвечает' }
@@ -3414,28 +3673,28 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
       patient.appointmentDate = outcome.appointmentDate
       patient.appointmentAt = `${outcome.appointmentDate}T${outcome.appointmentTime}:00`
       if (outcome.doctor && !patient.doctors?.includes(outcome.doctor)) patient.doctors = [...(patient.doctors || []), outcome.doctor]
+      patient.appointmentId ||= uid()
       const deadline = appointmentConfirmationDeadline(outcome.appointmentDate)
-      createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(outcome.appointmentDate)} в ${outcome.appointmentTime}` }, attemptedAt)
+      createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(outcome.appointmentDate)} в ${outcome.appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, attemptedAt)
     }
-    if (['reminder','thinking'].includes(outcome?.status)) {
+    if (outcome?.status === 'reminder') {
       const dueAt = `${outcome.reminderDate}T${outcome.reminderTime}:00`
-      createWorkflowTask(patient, { type:'reminder', title:'🔔 Напомнить пациенту', dueDate:outcome.reminderDate, dueAt, reminderTarget:outcome.reminderTarget, comment:outcome.reminderText }, attemptedAt)
+      createWorkflowTask(patient, { ...continuationMeta, type:'reminder', title:'🔔 Напомнить пациенту', dueDate:outcome.reminderDate, dueAt, reminderTarget:outcome.reminderTarget, comment:outcome.reminderText, idempotencyKey:`contact-reminder:${task.id}:${dueAt}` }, attemptedAt)
     }
     const settings = loadSystemSettings()
-    if (outcome?.status === 'treatment' && !activePatientTasksExcept(patient.id, task.id).length) {
+    if (outcome?.status === 'treatment') {
       const dueDate = localDatePlus(Number(settings.treatmentControlDays) || 7)
-      createWorkflowTask(patient, { type:'postop_control', title:'🪡 Первый контроль лечения', dueDate, dueTime:'10:00', comment:'Первый контроль после начала лечения' }, attemptedAt)
+      createWorkflowTask(patient, { ...continuationMeta, type:'postop_control', title:'🪡 Первый контроль лечения', dueDate, dueTime:'10:00', comment:'Первый контроль после начала лечения', idempotencyKey:`treatment-control:${task.id}` }, attemptedAt)
     }
     if (outcome?.status === 'treatment_completed') {
       const dueDate = dateAfterMonths(Number(settings.checkupAfterTreatmentMonths) || 6)
-      createWorkflowTask(patient, { type:'invite_checkup', title:'🦷 Профосмотр', dueDate, dueTime:'10:00', comment:'Профосмотр после завершения лечения' }, attemptedAt)
+      createWorkflowTask(patient, { ...continuationMeta, type:'invite_checkup', title:'🦷 Профосмотр', dueDate, dueTime:'10:00', comment:'Профосмотр после завершения лечения', idempotencyKey:`treatment-checkup:${task.id}` }, attemptedAt)
     }
     if (outcome?.status === 'checkup_status') {
-      if (outcome.checkupResult === 'thinking') createWorkflowTask(patient, { type:'reminder', title:'🔔 Напомнить о профосмотре', dueDate:outcome.followupDate, dueTime:outcome.followupTime, comment:'Пациент думает о профосмотре' }, attemptedAt)
-      if (outcome.checkupResult === 'no_contact') createWorkflowTask(patient, { type:'call', title:'📞 Повторный звонок по профосмотру', dueDate:outcome.followupDate, dueTime:outcome.followupTime, comment:'Не дозвонились по профосмотру' }, attemptedAt)
+      if (outcome.checkupResult === 'no_contact') createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Повторный звонок по профосмотру', dueDate:outcome.followupDate, dueTime:outcome.followupTime, comment:'Не дозвонились по профосмотру', idempotencyKey:`checkup-callback:${task.id}` }, attemptedAt)
       if (outcome.checkupResult === 'refusal') {
         const dueDate = dateAfterMonths(Number(settings.refusalFollowupMonths) || 6)
-        createWorkflowTask(patient, { type:'call', title:'📞 Контрольный контакт после отказа', dueDate, dueTime:'10:00', comment:'Повторно связаться после отказа от профосмотра' }, attemptedAt)
+        createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Контрольный контакт после отказа', dueDate, dueTime:'10:00', comment:'Повторно связаться после отказа от профосмотра', idempotencyKey:`checkup-refusal:${task.id}` }, attemptedAt)
       }
     }
     if (outcome?.status === 'refusal') {
@@ -3444,7 +3703,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
       patient.refusalReasonDetails = outcome.refusalReasonDetails || ''
       patient.refusalRecordedAt = attemptedAt
       const dueDate = dateAfterMonths(Number(settings.refusalFollowupMonths) || 6)
-      createWorkflowTask(patient, { type:'call', title:'📞 Контрольный контакт после отказа', dueDate, dueTime:'10:00', comment:'Повторно связаться после отказа пациента' }, attemptedAt)
+      createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Контрольный контакт после отказа', dueDate, dueTime:'10:00', comment:'Повторно связаться после отказа пациента', idempotencyKey:`refusal-followup:${task.id}` }, attemptedAt)
     }
     if (outcome?.status === 'do_not_call') {
       completePatientTasks(patient.id, item => isCallTaskType(item.type), attemptedAt, 'Не звонить')
@@ -3453,7 +3712,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
     task.status = 'completed'
     task.completedAt = attemptedAt
     task.completedBy = currentUser.name
-    const nextTask = createWorkflowTask(patient, { type:'call', title:'📞 Перезвонить', dueDate:followup.dueDate, dueAt:followup.dueAt || null, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' ') }, attemptedAt)
+    const nextTask = createWorkflowTask(patient, { ...continuationMeta, type:'call', title:'📞 Перезвонить', dueDate:followup.dueDate, dueAt:followup.dueAt || null, comment:[task.comment || task.note || '', comment].filter(Boolean).join(' '), idempotencyKey:`callback:${task.id}:${followup.dueAt || followup.dueDate}` }, attemptedAt)
     nextTask.reminderTarget = task.reminderTarget || null
     nextTask.reminderMethod = task.reminderMethod || null
   }
@@ -3471,7 +3730,7 @@ function applyCallResult(task, patient, result, followup, comment, outcome = nul
   patient.updatedAt = attemptedAt
   patient.updatedBy = currentUser.name
   const finalScenario = contactCompleted && outcome?.status === 'do_not_call'
-  if (!finalScenario && !activePatientTasksExcept(patient.id, task.id).length) throw new Error('Ошибка логики CRM: результат не создал следующее действие')
+  if (!finalScenario && !state.tasks.some(item => item.patientId === patient.id && item.id !== task.id && isTaskActive(item) && (item.parentTaskId === task.id || item.workflowId === task.workflowId || item.sourceEntityId === task.id))) throw new Error('Ошибка логики CRM: результат не создал связанное следующее действие')
   saveState(contactCompleted ? `Сохранён результат задачи: ${task.title}` : `Сохранён результат и создана новая задача: ${task.title}`)
   if (contactCompleted && outcome?.status === 'appointment') offerWaitlistRemoval(patient.id)
 }
@@ -3497,7 +3756,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     <div class="modal" id="taskModal"><div class="dialog task-dialog">
       <div class="dialog-head"><div><h2>${original ? 'Редактирование задачи' : 'Новая задача'}</h2><p>Отдельная дата, не меняющая другие задачи пациента</p></div><button class="icon-btn" data-close>×</button></div>
       <div class="task-form">
-        <label class="field"><span>Пациент</span><select id="tPatient"><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}" ${p.id === task.patientId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+        <label class="field"><span>Пациент</span><select id="tPatient" ${original ? 'disabled title="Для переноса задачи используйте отдельное действие"' : ''}><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}" ${p.id === task.patientId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
         <label class="field"><span>Тип</span><select id="tType">${TASK_TYPES.map(t => `<option value="${t.value}" ${t.value === task.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
         <label class="field span-2"><span>Что нужно сделать</span><input id="tTitle" value="${esc(task.title)}"></label>
@@ -3544,6 +3803,11 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     const dueDate = readManualDate(modal, 't')
     const dueTime = readManualTime(modal, 't')
     if (!dueDate || !dueTime) return
+    const dueValidation = validateFutureDateTime(dueDate, dueTime)
+    if (!dueValidation.valid) return alert(dueValidation.error)
+    const saveButton = modal.querySelector('#saveTask')
+    if (saveButton.dataset.saving === '1') return
+    saveButton.dataset.saving = '1'; saveButton.disabled = true
     const status = original ? task.status : 'active'
     Object.assign(task, {
       patientId,
@@ -3554,7 +3818,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       dueAt: `${dueDate}T${dueTime}:00`,
       assignee: modal.querySelector('#tAssignee').value,
       note: modal.querySelector('#tNote').value.trim(),
-      status,
+      status:status === 'open' ? TASK_STATUS_ACTIVE : status,
       completedAt: task.completedAt || null,
       completedBy: task.completedBy || null,
       updatedAt: new Date().toISOString(), updatedBy: currentUser.name,
@@ -3661,7 +3925,7 @@ function renderSettings() {
   content.querySelector('#saveSystemSettings')?.addEventListener('click', saveManagerSettings)
   content.querySelector('#resetAllUserSettings')?.addEventListener('click', () => {
     if (!confirm('Сбросить персональные настройки всех пользователей?')) return
-    USERS.forEach(user => localStorage.removeItem(`crm:userSettings:${user.id}`))
+    USERS.forEach(user => localStorage.removeItem(storageKey(`crm:userSettings:${user.id}`)))
     userSettings = defaultUserSettings(); applyUserSettings(userSettings); showToast('Пользовательские настройки сброшены.')
   })
 }
@@ -3751,8 +4015,8 @@ function renderAnalytics() {
     <section class="page-head"><div><h1>Отчётность</h1><p>Доступна только руководителям</p></div></section>
     <section class="analytics-cards">
       <div class="analytics-card"><span>Пациентов</span><b>${state.patients.length}</b></div>
-      <div class="analytics-card"><span>Открытых задач</span><b>${state.tasks.filter(t=>t.status==='open').length}</b></div>
-      <div class="analytics-card"><span>Просроченных</span><b>${state.tasks.filter(t=>t.status==='open'&&t.dueDate<today).length}</b></div>
+      <div class="analytics-card"><span>Открытых задач</span><b>${state.tasks.filter(isTaskActive).length}</b></div>
+      <div class="analytics-card"><span>Просроченных</span><b>${state.tasks.filter(isTaskOverdue).length}</b></div>
       <div class="analytics-card"><span>Выполнено за месяц</span><b>${completed.length}</b></div>
     </section>
     <div class="analytics-grid">
@@ -3794,13 +4058,15 @@ async function importBackup(event) {
   if (!file) return
   try {
     const data = JSON.parse(await file.text())
-    if (!Array.isArray(data.patients) || !Array.isArray(data.tasks)) throw new Error('Неверный формат')
-    if (!confirm(`Восстановить бэкап: ${data.patients.length} пациентов и ${data.tasks.length} задач? Текущие данные будут заменены.`)) return
-    state = { version: 3, patients: data.patients, tasks: data.tasks, waitlist: Array.isArray(data.waitlist) ? data.waitlist : [], audit: data.audit || [], updatedAt: new Date().toISOString() }
+    const prepared = prepareImportedState(data, { id:currentUser.id, name:currentUser.name })
+    if (prepared.critical.length) throw new Error(`Критические ошибки: ${prepared.critical.map(item => item.message).join('; ')}`)
+    const summary = `Пациентов: ${prepared.counts.patients}\nЗадач: ${prepared.counts.tasks}\nЗаписей ожидания: ${prepared.counts.waitlist}\nОшибок: ${prepared.report.errors.length}\nПредупреждений: ${prepared.report.warnings.length}${prepared.migrated ? '\nБудут применены безопасные миграции.' : ''}`
+    if (!confirm(`Проверка резервной копии завершена.\n\n${summary}\n\nПрименить импорт? Текущие данные будут заменены.`)) return
+    state = prepared.state
     saveState('Восстановлена резервная копия')
     renderShell()
   } catch (error) {
-    alert('Не удалось восстановить файл. Проверьте, что это JSON-бэкап приложения.')
+    alert(`Не удалось восстановить файл. ${error?.message || 'Проверьте, что это JSON-бэкап приложения.'}`)
   } finally {
     event.target.value = ''
   }
