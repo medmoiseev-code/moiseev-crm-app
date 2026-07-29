@@ -3762,9 +3762,8 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         ${manualDateMarkup('t', 'Дата', task.dueDate)}
         ${manualTimeMarkup('t', 'Время', task.dueAt?.slice(11, 16) || '10:00')}
         <label class="field span-2"><span>Комментарий</span><textarea id="tNote" placeholder="Детали и договорённости">${esc(task.note || '')}</textarea></label>
-        <label class="field"><span>Статус</span><input value="${isTaskCompleted(task) ? 'Выполнена' : task.status === 'cancelled' ? 'Отменена' : 'Активна'}" readonly title="Завершить активную задачу можно только через выбор результата"></label>
       </div>
-      <div class="quick-dates"><button data-plus="1">Завтра</button><button data-plus="3">Через 3 дня</button><button data-plus="7">Через неделю</button><button data-plus="180">Через полгода</button></div>
+      <div class="quick-dates"><button type="button" data-plus="1">Завтра</button><button type="button" data-plus="3">Через 3 дня</button><button type="button" data-plus="7">Через неделю</button><button type="button" data-plus="180">Через полгода</button></div>
       <div class="dialog-actions"><span></span><button class="btn" data-close>Отмена</button><button class="btn primary" id="saveTask">Сохранить</button></div>
     </div></div>
   `)
@@ -3794,6 +3793,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     modal.querySelector('#tDate').value = value
     modal.querySelector('#tDateText').value = formatDate(value)
     modal.querySelector('#tDateError').textContent = ''
+    modal.querySelectorAll('[data-plus]').forEach(button => button.classList.toggle('active', button === b))
   })
   modal.querySelector('#saveTask').onclick = () => {
     const patientId = modal.querySelector('#tPatient').value
