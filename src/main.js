@@ -76,7 +76,7 @@ const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
 const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
   { key: 'name', width: 255 },
-  { key: 'status', width: 200 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
+  { key: 'status', width: 300 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
   { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
 
@@ -404,21 +404,14 @@ function patientStageTaskMarkup(patient) {
   const treatments = (patient.treatments || []).filter(item => item.status !== 'completed')
   if (!treatments.length) return `<span class="status-chip patient-stage">${esc(normalizePatientStatus(patient.status))}</span>`
   const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
-  const stageDoctors = (patient.treatments || []).map(item => item.doctor || (DOCTORS.includes(item.name) ? item.name : '')).filter(Boolean)
-  const appointmentDates = [...new Set([...(patient.treatments || []).filter(item => item.status !== 'completed' && item.appointmentAt).map(item => item.appointmentAt.slice(0,10)), patient.appointmentDate].filter(Boolean))]
-  const today = localDatePlus(0), tomorrow = localDatePlus(1)
-  const matchesAppointmentDue = patientFilters.appointmentDue === 'all'
-    || (patientFilters.appointmentDue === 'today' && appointmentDates.includes(today))
-    || (patientFilters.appointmentDue === 'tomorrow' && appointmentDates.includes(tomorrow))
-    || (patientFilters.appointmentDue === 'upcoming' && appointmentDates.some(date => date > tomorrow))
-    || (patientFilters.appointmentDue === 'past' && appointmentDates.some(date => date < today))
-    || (patientFilters.appointmentDue === 'none' && !appointmentDates.length)
-  const rows = treatments.slice(0, 2).map(treatment => {
-    const protectedByTask = activeTasks.some(task => task.treatmentId === treatment.id)
+  const rows = treatments.map((treatment,index) => {
+    const linkedTasks = activeTasks.filter(task => task.treatmentId === treatment.id).sort((a,b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
+    const nextTask = linkedTasks[0]
+    const protectedByTask = Boolean(nextTask)
     const statusIcon = treatment.status === 'waiting' ? '⏳' : '🦷'
-    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><b>${statusIcon} ${esc(treatment.name)}</b><small>${esc(treatment.stage || 'Этап не указан')}</small>${protectedByTask ? '<i>✓</i>' : '<i>!</i>'}</span>`
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><b>${statusIcon} ${esc(treatment.name)}</b><small class="treatment-stage-text">${esc(treatment.stage || 'Этап не указан')}</small>${nextTask ? `<span class="treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(compactTaskLabel(nextTask))}</span></span>` : '<span class="treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
-  return `<span class="treatment-lines">${rows}${treatments.length > 2 ? `<small class="treatment-more">+ ещё ${treatments.length - 2}</small>` : ''}</span>`
+  return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`
 }
 
 function isValidTime(value) {
@@ -930,6 +923,15 @@ function patientMatchesFilters(patient) {
   const phoneQuery = normalizePhone(query)
   const identityValues = [patient.name, ...(patient.phones || [])].filter(Boolean).map(value => String(value).toLowerCase())
   const activeTasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task))
+  const stageDoctors = (patient.treatments || []).map(item => item.doctor || (DOCTORS.includes(item.name) ? item.name : '')).filter(Boolean)
+  const appointmentDates = [...new Set([...(patient.treatments || []).filter(item => item.status !== 'completed' && item.appointmentAt).map(item => item.appointmentAt.slice(0,10)), patient.appointmentDate].filter(Boolean))]
+  const today = localDatePlus(0), tomorrow = localDatePlus(1)
+  const matchesAppointmentDue = patientFilters.appointmentDue === 'all'
+    || (patientFilters.appointmentDue === 'today' && appointmentDates.includes(today))
+    || (patientFilters.appointmentDue === 'tomorrow' && appointmentDates.includes(tomorrow))
+    || (patientFilters.appointmentDue === 'upcoming' && appointmentDates.some(date => date > tomorrow))
+    || (patientFilters.appointmentDue === 'past' && appointmentDates.some(date => date < today))
+    || (patientFilters.appointmentDue === 'none' && !appointmentDates.length)
   const matchesTaskDue = patientFilters.taskDue === 'all'
     || (patientFilters.taskDue === 'today' && activeTasks.some(task => task.dueDate === localDatePlus(0)))
     || (patientFilters.taskDue === 'upcoming' && getUpcomingActiveTasks(activeTasks).length > 0)
@@ -1151,6 +1153,7 @@ function loadPatientTableSettings() {
     }
     if (widths.history === 360) widths.history = 450
     if (widths.addTask === 105) widths.addTask = 190
+    if (widths.status === 200) widths.status = 300
     if (saved.rowHeights && typeof saved.rowHeights === 'object' && !Array.isArray(saved.rowHeights)) {
       for (const [patientId, savedHeight] of Object.entries(saved.rowHeights)) {
         const height = Number(savedHeight)
@@ -1535,6 +1538,13 @@ function renderPatients() {
     openPatientModal(button.dataset.openPatient)
   })
   setupInlineCommentInputs(content)
+  content.querySelectorAll('[data-expand-treatment-lines]').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation()
+    const container = button.closest('[data-treatment-lines]')
+    const expanded = container.classList.toggle('expanded')
+    container.querySelectorAll('.treatment-line-extra').forEach(line => line.classList.toggle('hidden', !expanded))
+    button.textContent = expanded ? 'Свернуть' : `+ ещё ${container.querySelectorAll('.treatment-line-extra').length}`
+  }))
   document.querySelectorAll('[data-full-history]').forEach(button => {
     button.addEventListener('click', event => {
       event.preventDefault()
