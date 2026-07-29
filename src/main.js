@@ -3761,7 +3761,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
         <input type="hidden" id="tType" value="${esc(task.type)}">
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-        <label class="field" id="tContactChannelField"><span>Способ связи</span><div class="contact-channel-control ${task.contactChannel === 'max' ? 'is-max' : ''}"><i class="max-channel-icon" aria-hidden="true"></i><select id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${task.contactChannel === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></label>
+        <label class="field span-2" id="tContactChannelField"><span>Способ связи</span><div class="contact-channel-control"><select class="hidden" id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${(task.contactChannel || 'call') === value ? 'selected' : ''}>${label}</option>`).join('')}</select><div class="contact-channel-options">${CONTACT_CHANNELS.map(([value,label]) => `<button type="button" data-contact-channel="${value}" class="${(task.contactChannel || 'call') === value ? 'active' : ''}">${value === 'max' ? '<i class="max-channel-choice-icon" aria-hidden="true"></i>' : ''}<span>${label}</span></button>`).join('')}</div></div></label>
         <label class="field hidden" id="tInternalReasonField"><span>Что сделать</span><select id="tInternalReason">${INTERNAL_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field hidden" id="tInternalObjectField"><span>По какому вопросу</span><select id="tInternalObject">${INTERNAL_OBJECTS.map(([value,label]) => `<option value="${value}" ${task.actionObject === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field ${task.type === 'reminder' ? '' : 'hidden'}" id="tReminderRecipient"><span>Кому напомнить</span><select id="tReminderTarget"><option value="patient" ${(task.reminderTarget || 'patient') === 'patient' ? 'selected' : ''}>Пациенту</option><option value="doctor" ${task.reminderTarget === 'doctor' ? 'selected' : ''}>Доктору</option></select></label>
@@ -3783,7 +3783,10 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
   const taskType = modal.querySelector('#tType')
   const contactChannel = modal.querySelector('#tContactChannel')
   const contactChannelControl = modal.querySelector('.contact-channel-control')
-  contactChannel?.addEventListener('change', () => contactChannelControl?.classList.toggle('is-max', contactChannel.value === 'max'))
+  contactChannelControl?.querySelectorAll('[data-contact-channel]').forEach(button => button.addEventListener('click', () => {
+    contactChannel.value = button.dataset.contactChannel
+    contactChannelControl.querySelectorAll('[data-contact-channel]').forEach(option => option.classList.toggle('active', option === button))
+  }))
   const reminderRecipient = modal.querySelector('#tReminderRecipient')
   const updateReminderRecipient = () => {
     reminderRecipient.classList.toggle('hidden', taskType.value !== 'reminder')
