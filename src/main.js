@@ -438,6 +438,10 @@ function setupManualTime(root, prefix) {
     options?.classList.remove('hidden')
     input.setAttribute('aria-expanded', 'true')
     input.focus()
+    if (showAll) requestAnimationFrame(() => {
+      const tenOClock = optionButtons.find(button => button.dataset.timeOption === '10:00')
+      if (tenOClock && options) options.scrollTop = tenOClock.offsetTop - (options.clientHeight - tenOClock.offsetHeight) / 2
+    })
   }
   const toggleFullList = event => {
     event.preventDefault()
