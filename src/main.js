@@ -167,9 +167,10 @@ function loadState() {
       }
       loaded.patients.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
       const legacyChanged = migrateLegacyPatientDates(loaded)
+      const appointmentTreatmentsChanged = migrateAppointmentTreatments(loaded)
       const migrated = migrateBusinessState(loaded, { name:'Система' })
       migrated.state.patients.forEach(patient => { patient.status = normalizePatientStatus(patient.status) })
-      if (legacyChanged || migrated.changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated.state))
+      if (legacyChanged || appointmentTreatmentsChanged || migrated.changed) localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated.state))
       return migrated.state
     }
     if (Array.isArray(saved?.patients) && saved.patients.length === 0) {
@@ -253,6 +254,30 @@ function matchesDateFilter(value, filter) {
 
 function isTaskActive(task) {
   return task?.status === TASK_STATUS_ACTIVE || task?.status === 'open'
+}
+
+function migrateAppointmentTreatments(data) {
+  let changed = false
+  const today = new Date(); today.setHours(0,0,0,0)
+  for (const patient of data.patients || []) {
+    patient.treatments ||= []
+    for (const entry of patient.history || []) {
+      const text = String(entry.text || '')
+      const match = text.match(/Записан на приём (\d{2})\.(\d{2})\.(\d{4}) в (\d{2}:\d{2})/i)
+      const doctor = DOCTORS.find(name => text.includes(name))
+      if (!match || !doctor) continue
+      const date = `${match[3]}-${match[2]}-${match[1]}`
+      const appointmentAt = `${date}T${match[4]}:00`
+      if (new Date(appointmentAt).getTime() < today.getTime()) continue
+      if (patient.treatments.some(item => item.doctor === doctor && item.appointmentAt === appointmentAt)) continue
+      const treatment = { id:uid(), appointmentId:`restored-${patient.id}-${date}-${match[4]}-${doctor}`, name:doctor, doctor, stage:`Записан на ${formatDate(date)} в ${match[4]}`, appointmentAt, status:'active', createdAt:entry.createdAt || entry.timestamp || new Date().toISOString(), updatedAt:new Date().toISOString() }
+      patient.treatments.push(treatment)
+      const tomorrow = localDatePlus(1)
+      data.tasks.push({ id:uid(), patientId:patient.id, type:'contact', title:`📞 Проверить запись · ${doctor}`, dueDate:tomorrow, dueAt:`${tomorrow}T10:00:00`, assignee:patient.updatedBy || '', note:`Проверить запись на ${formatDate(date)} в ${match[4]}`, comment:`Проверить запись на ${formatDate(date)} в ${match[4]}`, status:'active', completedAt:null, createdAt:new Date().toISOString(), createdBy:'Миграция', treatmentId:treatment.id, workflowId:`appointment:${treatment.appointmentId}`, workflowType:'appointment', sourceEntityType:'appointment', sourceEntityId:treatment.appointmentId, idempotencyKey:`restored-appointment:${treatment.appointmentId}` })
+      changed = true
+    }
+  }
+  return changed
 }
 
 function isTaskCompleted(task) {
@@ -2099,6 +2124,8 @@ function openPatientModal(patientId = null, options = {}) {
     if (original) Object.assign(original, patient)
     else state.patients.push(patient)
     if (appointmentChanged) {
+      patient.appointmentId ||= uid()
+      const appointmentTreatment = ensureAppointmentTreatment(patient, { doctor:patient.doctors[0] || 'Приём', date:appointmentDate, time:appointmentTime, appointmentId:patient.appointmentId, now:patient.updatedAt })
       const deadline = appointmentConfirmationDeadline(appointmentDate)
       const existingConfirmation = state.tasks.find(task => task.patientId === patient.id && isTaskActive(task) && isAppointmentConfirmationTask(task))
       if (existingConfirmation) {
@@ -2107,11 +2134,11 @@ function openPatientModal(patientId = null, options = {}) {
         existingConfirmation.note = `Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`
         existingConfirmation.comment = existingConfirmation.note
         existingConfirmation.confirmationAppointmentDate = appointmentDate
+        existingConfirmation.treatmentId = appointmentTreatment.id
         existingConfirmation.updatedAt = patient.updatedAt
         existingConfirmation.updatedBy = currentUser.name
       } else {
-        patient.appointmentId ||= uid()
-        const confirmationTask = createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, patient.updatedAt)
+        const confirmationTask = createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${patient.doctors[0] || 'врач'}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, treatmentId:appointmentTreatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, patient.updatedAt)
         confirmationTask.confirmationAppointmentDate = appointmentDate
         patient.history.unshift(createHistoryEntry('task', `Создана задача подтверждения записи на ${formatDate(deadline.dueDate)}.`, { actionIcon:'📞', taskType:'call' }))
       }
@@ -2140,6 +2167,18 @@ function dateAfterMonths(months) {
   date.setHours(12, 0, 0, 0)
   date.setMonth(date.getMonth() + months)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function ensureAppointmentTreatment(patient, { doctor, date, time, appointmentId, now = new Date().toISOString() }) {
+  patient.treatments ||= []
+  const id = appointmentId || uid()
+  let treatment = patient.treatments.find(item => item.appointmentId === id)
+  if (!treatment) {
+    treatment = { id:uid(), appointmentId:id, name:doctor || 'Приём', stage:'', status:'active', createdAt:now }
+    patient.treatments.push(treatment)
+  }
+  Object.assign(treatment, { appointmentId:id, name:doctor || treatment.name || 'Приём', doctor:doctor || treatment.doctor || '', stage:`Записан на ${formatDate(date)} в ${time}`, appointmentAt:`${date}T${time}:00`, status:'active', updatedAt:now })
+  return treatment
 }
 
 function createActionTask(patient, { type, title, dueDate, dueAt = null, comment = '', reminderTarget = null }, createdAt) {
@@ -2359,14 +2398,15 @@ function savePatientAction(patient, action, modal) {
     Object.assign(decisionTask, { decisionSubject, decisionReasonCode, decisionReason, decisionOtherReason, decisionDoctor:doctor, decisionService:modal.querySelector('#actionDecisionService')?.value.trim() || '', decisionComment:comment, lastPatientPromise:modal.querySelector('#actionDecisionPromise')?.value.trim() || '', lastContactAt:now })
     icon = '🤔'; text = `Решение не принято. Вопрос: ${decisionSubject}. Причина: ${decisionReason}${decisionOtherReason ? `. ${decisionOtherReason}` : ''}. Следующий контакт: ${formatDate(date)} в ${time}. Создана задача «${cleanTaskLabel(decisionTask.title)}».`
   } else if (action === 'appointment') {
-    patient.appointmentId ||= uid()
+    patient.appointmentId = uid()
     patient.status = '📅 Записан на приём'; patient.appointmentDate = date; patient.appointmentAt = `${date}T${time}:00`
     if (doctor && !patient.doctors?.includes(doctor)) patient.doctors = [...(patient.doctors || []), doctor]
-    completePatientTasks(patient.id, task => isCallTaskType(task.type), now, 'Пациент записан на приём')
+    completePatientTasks(patient.id, task => isCallTaskType(task.type) && !task.appointmentId && !task.treatmentId, now, 'Пациент записан на приём')
     icon = '📅'; text = `Записан на приём ${formatDate(date)} в ${time}${doctor ? `, врач ${doctor}` : ''}${comment ? `. ${comment}` : ''}.`
     const deadline = appointmentConfirmationDeadline(date)
     const confirmationComment = modal.querySelector('#actionConfirmationComment').value.trim() || 'Подтвердить приём'
-    createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:confirmationComment, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
+    const treatment = ensureAppointmentTreatment(patient, { doctor, date, time, appointmentId:patient.appointmentId, now })
+    createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${doctor}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:confirmationComment, appointmentId:patient.appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
   } else if (action === 'refusal') {
     patient.status = '❌ Отказ'; completePatientTasks(patient.id, () => true, now, 'Отказ пациента')
     patient.refusalReason = refusalReason.value
@@ -2798,9 +2838,10 @@ function openWaitlistCompletionModal(entryId) {
         if (!doctor) return alert('Выберите врача')
         draftEntry.status = 'removed'; draftEntry.removedAt = now; draftEntry.removedBy = currentUser.name
         const appointmentId = makeAppointmentId(patient.id)
-        draftPatient.appointmentId = appointmentId; draftPatient.appointmentDate = dueDate; draftPatient.appointmentAt = `${dueDate}T${dueTime}:00`; draftPatient.doctors = [doctor]; draftPatient.status = '📅 Записан на приём'
+        draftPatient.appointmentId = appointmentId; draftPatient.appointmentDate = dueDate; draftPatient.appointmentAt = `${dueDate}T${dueTime}:00`; draftPatient.doctors = [...new Set([...(draftPatient.doctors || []), doctor])]; draftPatient.status = '📅 Записан на приём'
         const deadline = appointmentConfirmationDeadline(dueDate)
-        createWorkflowTaskCore(draft,draftPatient,{type:'call',title:'📞 Подтвердить приём',dueDate:deadline.dueDate,dueAt:deadline.dueAt,appointmentId,workflowType:'appointment',workflowId:`appointment:${appointmentId}`,parentTaskId:linkedTasks[0]?.id||null,sourceEntityType:'appointment',sourceEntityId:appointmentId,idempotencyKey:`appointment-confirmation:${appointmentId}`,comment:reason},actor)
+        const treatment = ensureAppointmentTreatment(draftPatient, { doctor, date:dueDate, time:dueTime, appointmentId, now })
+        createWorkflowTaskCore(draft,draftPatient,{type:'call',title:`📞 Подтвердить приём · ${doctor}`,dueDate:deadline.dueDate,dueAt:deadline.dueAt,appointmentId,treatmentId:treatment.id,workflowType:'appointment',workflowId:`appointment:${appointmentId}`,parentTaskId:linkedTasks[0]?.id||null,sourceEntityType:'appointment',sourceEntityId:appointmentId,idempotencyKey:`appointment-confirmation:${appointmentId}`,comment:reason},actor)
       } else {
         const nextType = outcome === 'waiting' ? 'waitlist' : outcome === 'later' ? 'reminder' : outcome === 'refused' ? 'call' : 'call'
         const title = outcome === 'waiting' ? '⏳ Следующий контакт по листу ожидания' : outcome === 'later' ? '🔔 Связаться позже по листу ожидания' : outcome === 'refused' ? '📞 Контрольный контакт после отказа от ожидания' : '📞 Повторный звонок по листу ожидания'
@@ -3065,9 +3106,10 @@ function openReminderResultModal(task, options = {}) {
       const doctor = modal.querySelector('#reminderAppointmentDoctor').value
       if (!doctor) return alert('Выберите врача')
       completeTaskRecord(task, now, 'Пациент записан на приём', comment)
-      patient.appointmentDate = appointmentDate; patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`; patient.status = '📅 Записан на приём'; patient.doctors = [doctor]; patient.appointmentId ||= uid()
+      patient.appointmentDate = appointmentDate; patient.appointmentAt = `${appointmentDate}T${appointmentTime}:00`; patient.status = '📅 Записан на приём'; patient.doctors = [...new Set([...(patient.doctors || []), doctor])]; patient.appointmentId = uid()
       const deadline = appointmentConfirmationDeadline(appointmentDate)
-      createWorkflowTask(patient, { type:'call', title:'📞 Подтвердить приём', dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
+      const treatment = ensureAppointmentTreatment(patient, { doctor, date:appointmentDate, time:appointmentTime, appointmentId:patient.appointmentId, now })
+      createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${doctor}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
     } else if (['repeat','postponed'].includes(result)) {
       const dueDate = readManualDate(modal, 'reminderRepeat')
       const dueTime = readManualTime(modal, 'reminderRepeat')
