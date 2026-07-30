@@ -449,7 +449,7 @@ function patientStageTaskMarkup(patient) {
       : treatment.kind === 'checkup'
         ? `🦷 Проф. осмотр${checkupDate ? ` ${formatDate(checkupDate)}` : ''}`
         : genericStatus
-    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<span class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(treatmentTaskLabel(nextTask, doctor))}</span></span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<button type="button" class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}" data-stage-process-task="${nextTask.id}" title="Указать результат"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(treatmentTaskLabel(nextTask, doctor))}</span></button>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
   return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`
 }
@@ -1576,6 +1576,13 @@ function renderPatients() {
         document.querySelector('#taskDrawerOverlay')?.remove()
         openTaskModal(null, patientId)
       }
+    }
+  })
+  content.querySelectorAll('[data-stage-process-task]').forEach(button => {
+    button.onclick = event => {
+      event.preventDefault()
+      event.stopPropagation()
+      openTaskExecution(button.dataset.stageProcessTask)
     }
   })
   document.querySelectorAll('[data-open-patient]').forEach(button => button.onclick = event => {
