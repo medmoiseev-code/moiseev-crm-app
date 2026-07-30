@@ -20,7 +20,7 @@ export const THEMES = {
 export const defaultUserSettings = () => ({
   version: USER_SETTINGS_VERSION,
   appearance: { theme:'moiseev', scale:100, fontSize:'standard', density:'standard', radius:'medium', shadows:'standard', animations:'full', icons:true, tooltips:true },
-  table: { rowHeight:58, stickyHeader:true, hover:true, verticalBorders:false, horizontalBorders:true, striped:false, rowNumbers:false, rememberWidths:true, rememberOrder:true, rememberSort:true, rememberFilters:false, hiddenColumns:[] },
+  table: { rowHeight:58, stickyHeader:true, hover:true, verticalBorders:false, horizontalBorders:true, striped:true, rowNumbers:false, rememberWidths:true, rememberOrder:true, rememberSort:true, rememberFilters:false, hiddenColumns:[] },
   tasks: { confirmCompletion:true, confirmDeletion:true, autoOpenNext:false, showCompleted:true, overdueFirst:true, sortByDateTime:true, showComment:true, showAuthor:true, showTransferTime:true },
   notifications: { toast:true, sound:false, newTask:false, overdue:true, before15:false, before30:false, unfinishedShift:true, counters:true, volume:'standard' },
   calendar: { firstDay:'monday', dateFormat:'long', timeFormat:'24', timeStep:15, weekends:true, highlightToday:true },
