@@ -27,18 +27,7 @@ const TASK_TYPES = [
   { value: 'appointment', label: '📅 Записать на приём' },
 ]
 
-const CONTACT_REASONS = [['decision','🤔 Получить решение по лечению'],['reminder','🔔 Напомнить о договорённости'],['next_stage','🦷 Пригласить на следующий этап'],['ready','✅ Сообщить о готовности'],['reschedule','📅 Согласовать или перенести запись'],['wellbeing','🩺 Уточнить самочувствие'],['consent','📄 Получить документы, данные или согласие'],['finance','💳 Финансовый вопрос'],['other','💬 Другое']]
-const CONTACT_STAGES = {
-  decision:{ name:'Решение по лечению', stage:'🤔 Ожидается решение по лечению' },
-  reminder:{ name:'Договорённость', stage:'🔔 Запланировано напоминание' },
-  next_stage:{ name:'Следующий этап лечения', stage:'🦷 Готов к следующему этапу' },
-  ready:{ name:'Готовность результата', stage:'✅ Результат или работа готовы' },
-  reschedule:{ name:'Запись на приём', stage:'📅 Требуется согласовать запись' },
-  wellbeing:{ name:'Контроль после лечения', stage:'🩺 Контроль самочувствия' },
-  consent:{ name:'Документы и согласие', stage:'📄 Ожидаются документы или согласие' },
-  finance:{ name:'Финансовый вопрос', stage:'💳 Финансовое согласование' },
-  other:{ name:'Связь с пациентом', stage:'📞 Требуется связь' },
-}
+const CONTACT_REASONS = [['decision','🤔 Получить решение по лечению'],['reminder','🔔 Напомнить'],['next_stage','🦷 Пригласить на следующий этап'],['ready','✅ Сообщить о готовности'],['reschedule','📅 Согласовать или перенести запись'],['wellbeing','🩺 Уточнить самочувствие'],['consent','📄 Получить документы, данные или согласие'],['finance','💳 Финансовый вопрос'],['other','💬 Другое']]
 const CONTACT_RECIPIENTS = [['patient','👤 Пациент'],['doctor','👨‍⚕️ Доктор'],['laboratory','🧪 Лаборатория'],['other','💬 Другое']]
 const CONTACT_CHANNELS = [['call','📞 Позвонить'],['whatsapp','🟢 WhatsApp'],['telegram','➤ Telegram'],['max','MAX'],['sms','💬 SMS'],['email','📧 Email']]
 const INTERNAL_REASONS = [['check','Проверить'],['prepare','Подготовить'],['transfer','Передать'],['receive','Получить'],['wait','Ожидать результат'],['other','Другое']]
@@ -445,9 +434,7 @@ function patientStageTaskMarkup(patient) {
       : nextTask?.actionObject === 'payment' ? `💳 Финансовый вопрос${routeSchedule}`
       : nextTask?.actionObject === 'doctor' ? `👨‍⚕️ Ожидается решение врача${routeSchedule}`
       : `⚙️ Внутренняя работа${routeSchedule}`
-    const contactStage = CONTACT_STAGES[nextTask?.actionReason]
     const genericStatus = routeType === 'waitlist' || treatment.kind === 'waitlist' ? `⏳ Лист ожидания${routeSchedule}`
-      : ['contact','call','write','message'].includes(routeType) && contactStage ? `${contactStage.stage}${routeSchedule}`
       : ['contact','call','write','message'].includes(routeType) ? `📞 Требуется связь${routeSchedule}`
       : routeType === 'internal' ? internalStatus
       : routeType === 'reminder' ? `🔔 Напоминание${routeSchedule}`
@@ -4138,22 +4125,9 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
     })
     task.history ||= []
     task.history.push({ id:uid(), at:task.updatedAt, author:currentUser.name, action:original ? 'updated' : 'created', text:taskHistoryText(task.type, title, task.dueDate, task.note) })
-    const patient = state.patients.find(p => p.id === patientId)
-    if (patient && selectedType === 'contact') {
-      patient.treatments ||= []
-      const contactStage = CONTACT_STAGES[contactReason] || CONTACT_STAGES.other
-      let treatment = patient.treatments.find(item => item.id === task.treatmentId)
-      if (!treatment) {
-        treatment = { id:uid(), kind:'contact', name:contactStage.name, doctor:patient.doctors?.[0] || '', stage:contactStage.stage, contactReason, dueAt:task.dueAt, status:'active', createdAt:task.updatedAt, updatedAt:task.updatedAt }
-        patient.treatments.push(treatment)
-      } else if (['contact','task'].includes(treatment.kind)) {
-        Object.assign(treatment, { kind:'contact', name:contactStage.name, stage:contactStage.stage, contactReason, dueAt:task.dueAt, status:'active', updatedAt:task.updatedAt })
-      }
-      task.treatmentId = treatment.id
-      task.scope = 'treatment'
-    }
     if (original) Object.assign(original, task)
     else state.tasks.push(task)
+    const patient = state.patients.find(p => p.id === patientId)
     if (patient) {
       mirrorPatientNote(patient, task.note)
       if (isCheckupTaskType(task.type)) patient.status = '🔄 Профосмотр'
