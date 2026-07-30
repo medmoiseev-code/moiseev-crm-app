@@ -403,13 +403,6 @@ function tableTaskDue(task) {
   return `${day}${time ? ` ${time}` : ''}`
 }
 
-function taskDeadlineClass(task) {
-  if (isTaskOverdue(task)) return 'deadline-overdue'
-  if (task?.dueDate === todayISO()) return 'deadline-today'
-  if (task?.dueDate === localDatePlus(1)) return 'deadline-tomorrow'
-  return task?.dueDate ? 'deadline-upcoming' : ''
-}
-
 function patientTaskIndicatorsMarkup(tasks) {
   if (tasks.length < 2) return ''
   const additionalTasks = tasks.slice(1)
@@ -456,7 +449,7 @@ function patientStageTaskMarkup(patient) {
       : treatment.kind === 'checkup'
         ? `🦷 Проф. осмотр${checkupDate ? ` ${formatDate(checkupDate)}` : ''}`
         : genericStatus
-    const taskButton = task => `<button type="button" class="treatment-route-node treatment-next-action ${isTaskOverdue(task) ? 'overdue' : ''} ${taskDeadlineClass(task)}" data-stage-process-task="${task.id}" title="Указать результат"><time>${esc(tableTaskDue(task))}</time><span>${esc(treatmentTaskLabel(task, doctor))}</span></button>`
+    const taskButton = task => `<button type="button" class="treatment-route-node treatment-next-action ${isTaskOverdue(task) ? 'overdue' : ''}" data-stage-process-task="${task.id}" title="Указать результат"><time>${esc(tableTaskDue(task))}</time><span>${esc(treatmentTaskLabel(task, doctor))}</span></button>`
     const additionalTasks = linkedTasks.slice(1)
     const taskMarkup = nextTask ? `<span class="treatment-action-stack">${taskButton(nextTask)}${additionalTasks.length ? `<details class="treatment-extra-tasks"><summary>+ ${additionalTasks.length} ${taskWord(additionalTasks.length)}</summary><span>${additionalTasks.map(taskButton).join('')}</span></details>` : ''}</span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'
     return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${taskMarkup}<i>${protectedByTask ? '✓' : '!'}</i></span>`

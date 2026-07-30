@@ -359,10 +359,6 @@ html{font-size:calc(16px * var(--ui-scale,1))}body{background:var(--color-bg,#0b
 .patient-stage-cell .treatment-extra-tasks{min-width:0}
 .patient-stage-cell .treatment-extra-tasks>summary{width:max-content;color:#91a8ff;font-size:10px;font-weight:750;cursor:pointer}
 .patient-stage-cell .treatment-extra-tasks>span{display:grid;gap:6px;margin-top:7px;padding-top:7px;border-top:1px dashed rgba(122,140,166,.3)}
-.patient-stage-cell .treatment-next-action.deadline-today time{color:#e58b3b}
-.patient-stage-cell .treatment-next-action.deadline-tomorrow time{color:#d8b83e}
-.patient-stage-cell .treatment-next-action.deadline-upcoming time{color:#45a66f}
-.patient-stage-cell .treatment-next-action.deadline-overdue time{color:#d65361}
 
 /* Компактные элементы демонстрационного режима */
 .demo-version-badge{flex:0 0 auto;border:1px solid #a87527;border-radius:999px;padding:5px 9px;background:#a875271c;color:#f2bd58;font-size:10px;font-weight:800;letter-spacing:.02em;white-space:nowrap}.demo-reset-dialog{width:min(520px,94vw)}.demo-reset-dialog .dialog-head p{max-width:430px;margin-top:9px;color:var(--text);font-size:14px;line-height:1.55}
