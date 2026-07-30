@@ -76,7 +76,7 @@ const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
 const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
   { key: 'name', width: 255 },
-  { key: 'status', width: 650 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
+  { key: 'status', width: 650 }, { key: 'actions', width: 82 },
   { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
 
@@ -403,6 +403,13 @@ function tableTaskDue(task) {
   return `${day}${time ? ` ${time}` : ''}`
 }
 
+function taskDeadlineClass(task) {
+  if (isTaskOverdue(task)) return 'deadline-overdue'
+  if (task?.dueDate === todayISO()) return 'deadline-today'
+  if (task?.dueDate === localDatePlus(1)) return 'deadline-tomorrow'
+  return task?.dueDate ? 'deadline-upcoming' : ''
+}
+
 function patientTaskIndicatorsMarkup(tasks) {
   if (tasks.length < 2) return ''
   const additionalTasks = tasks.slice(1)
@@ -449,7 +456,10 @@ function patientStageTaskMarkup(patient) {
       : treatment.kind === 'checkup'
         ? `🦷 Проф. осмотр${checkupDate ? ` ${formatDate(checkupDate)}` : ''}`
         : genericStatus
-    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<button type="button" class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}" data-stage-process-task="${nextTask.id}" title="Указать результат"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(treatmentTaskLabel(nextTask, doctor))}</span></button>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
+    const taskButton = task => `<button type="button" class="treatment-route-node treatment-next-action ${isTaskOverdue(task) ? 'overdue' : ''} ${taskDeadlineClass(task)}" data-stage-process-task="${task.id}" title="Указать результат"><time>${esc(tableTaskDue(task))}</time><span>${esc(treatmentTaskLabel(task, doctor))}</span></button>`
+    const additionalTasks = linkedTasks.slice(1)
+    const taskMarkup = nextTask ? `<span class="treatment-action-stack">${taskButton(nextTask)}${additionalTasks.length ? `<details class="treatment-extra-tasks"><summary>+ ${additionalTasks.length} ${taskWord(additionalTasks.length)}</summary><span>${additionalTasks.map(taskButton).join('')}</span></details>` : ''}</span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${taskMarkup}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
   return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`
 }
@@ -979,8 +989,10 @@ function patientMatchesFilters(patient) {
     || (patientFilters.appointmentDue === 'past' && appointmentDates.some(date => date < today))
     || (patientFilters.appointmentDue === 'none' && !appointmentDates.length)
   const matchesTaskDue = patientFilters.taskDue === 'all'
-    || (patientFilters.taskDue === 'today' && activeTasks.some(task => task.dueDate === localDatePlus(0)))
+    || (patientFilters.taskDue === 'today' && activeTasks.some(task => task.dueDate === today))
+    || (patientFilters.taskDue === 'tomorrow' && activeTasks.some(task => task.dueDate === tomorrow))
     || (patientFilters.taskDue === 'upcoming' && getUpcomingActiveTasks(activeTasks).length > 0)
+    || (patientFilters.taskDue === 'overdue' && activeTasks.some(isTaskOverdue))
   return (!query || identityValues.some(value => value.includes(query) || (phoneQuery && normalizePhone(value).includes(phoneQuery))))
     && (!patientFilters.doctor || stageDoctors.includes(patientFilters.doctor) || (!stageDoctors.length && (patient.doctors || []).includes(patientFilters.doctor)))
     && (!patientFilters.status
@@ -1186,11 +1198,9 @@ function loadPatientTableSettings() {
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Неверный формат настроек таблицы')
     const savedOrder = Array.isArray(saved.order) ? saved.order.filter(key => defaultOrder.includes(key)) : []
     const order = [...new Set([...savedOrder, ...defaultOrder])]
-    const taskIndex = order.indexOf('addTask')
-    if (taskIndex >= 0) order.splice(taskIndex, 1)
     const actionsIndex = order.indexOf('actions')
     if (actionsIndex >= 0) order.splice(actionsIndex, 1)
-    order.splice(order.indexOf('status') + 1, 0, 'addTask', 'actions')
+    order.splice(order.indexOf('status') + 1, 0, 'actions')
     const widths = { ...defaultWidths }
     const rowHeights = {}
     for (const key of defaultOrder) {
@@ -1198,7 +1208,6 @@ function loadPatientTableSettings() {
       if (Number.isFinite(width)) widths[key] = Math.max(70, Math.min(800, width))
     }
     if (widths.history === 360) widths.history = 450
-    if (widths.addTask === 105) widths.addTask = 190
     if ([200,300,480,560].includes(widths.status)) widths.status = 650
     if (saved.rowHeights && typeof saved.rowHeights === 'object' && !Array.isArray(saved.rowHeights)) {
       for (const [patientId, savedHeight] of Object.entries(saved.rowHeights)) {
@@ -1415,12 +1424,12 @@ function loadPatientFilters() {
   const defaults = { name: '', doctor: '', status: '', appointmentDue:'all', group: 'all', taskDue: 'all' }
   try {
     const saved = JSON.parse(localStorage.getItem(PATIENT_FILTERS_KEY) || '{}')
-    return { ...defaults, doctor:String(saved.doctor || ''), status:String(saved.status || ''), appointmentDue:['all','today','tomorrow','upcoming','past','none'].includes(saved.appointmentDue) ? saved.appointmentDue : 'all' }
+    return { ...defaults, doctor:String(saved.doctor || ''), status:String(saved.status || ''), appointmentDue:['all','today','tomorrow','upcoming','past','none'].includes(saved.appointmentDue) ? saved.appointmentDue : 'all', taskDue:['all','today','tomorrow','upcoming','overdue'].includes(saved.taskDue) ? saved.taskDue : 'all' }
   } catch { return defaults }
 }
 
 function savePatientFilters() {
-  localStorage.setItem(PATIENT_FILTERS_KEY, JSON.stringify({ doctor:patientFilters.doctor, status:patientFilters.status, appointmentDue:patientFilters.appointmentDue }))
+  localStorage.setItem(PATIENT_FILTERS_KEY, JSON.stringify({ doctor:patientFilters.doctor, status:patientFilters.status, appointmentDue:patientFilters.appointmentDue, taskDue:patientFilters.taskDue }))
 }
 
 function comparePatientNames(a, b) {
@@ -1490,11 +1499,12 @@ function patientNameSortMenuMarkup() {
 
 function patientStageFilterMenuMarkup(doctors) {
   const stageOptions = [['','Все этапы'],['checkup_status_or_task','Профосмотр'],['refusal_or_dnc','Отказ или не звонить'],...STATUS_OPTIONS.filter(Boolean).map(value => [value,normalizePatientStatus(value).replace(/^[^А-ЯA-ZЁ]+\s*/iu,'')])]
-  const active = Boolean(patientFilters.status || patientFilters.doctor || patientFilters.appointmentDue !== 'all')
+  const active = Boolean(patientFilters.status || patientFilters.doctor || patientFilters.appointmentDue !== 'all' || patientFilters.taskDue !== 'all' || ['taskAsc','taskDesc'].includes(patientSort))
   const buttons = (kind, options, selected) => options.map(([value,label]) => `<button type="button" class="${selected === value ? 'active' : ''}" data-stage-filter-kind="${kind}" data-stage-filter-value="${esc(value)}"><span>${esc(label)}</span><i>${selected === value ? '✓' : ''}</i></button>`).join('')
   const dateOptions = [['all','Все даты'],['today','Сегодня'],['tomorrow','Завтра'],['upcoming','Будущие'],['past','Прошедшие'],['none','Без записи']]
-  const sortOptions = [['appointmentAsc','Сначала ближайшие'],['appointmentDesc','Сначала дальние']]
-  return `<div class="patient-stage-filter"><button type="button" class="table-header-control ${active ? 'active' : ''}" data-patient-stage-filter-toggle aria-haspopup="menu" aria-expanded="false"><span>Этап</span><i>${active ? '●' : '⌄'}</i></button><div class="patient-stage-filter-menu hidden" role="menu"><strong>Этап</strong>${buttons('status',stageOptions,patientFilters.status)}<strong>Врач</strong>${buttons('doctor',[['','Все врачи'],...doctors.map(value => [value,value])],patientFilters.doctor)}<strong>Дата приёма</strong>${buttons('appointmentDue',dateOptions,patientFilters.appointmentDue)}<strong>Сортировка записей</strong>${buttons('sort',sortOptions,patientSort)}</div></div>`
+  const taskOptions = [['all','Все задачи'],['today','🟠 Сегодня'],['tomorrow','🟡 Завтра'],['upcoming','🟢 Будущие'],['overdue','🔴 Просроченные']]
+  const sortOptions = [['appointmentAsc','Записи: сначала ближайшие'],['appointmentDesc','Записи: сначала дальние'],['taskAsc','Задачи: сначала ближайшие'],['taskDesc','Задачи: сначала дальние']]
+  return `<div class="patient-stage-filter"><button type="button" class="table-header-control ${active ? 'active' : ''}" data-patient-stage-filter-toggle aria-haspopup="menu" aria-expanded="false"><span>Этап</span><i>${active ? '●' : '⌄'}</i></button><div class="patient-stage-filter-menu hidden" role="menu"><strong>Этап</strong>${buttons('status',stageOptions,patientFilters.status)}<strong>Врач</strong>${buttons('doctor',[['','Все врачи'],...doctors.map(value => [value,value])],patientFilters.doctor)}<strong>Дата приёма</strong>${buttons('appointmentDue',dateOptions,patientFilters.appointmentDue)}<strong>Срок задачи</strong>${buttons('taskDue',taskOptions,patientFilters.taskDue)}<strong>Сортировка</strong>${buttons('sort',sortOptions,patientSort)}</div></div>`
 }
 
 function taskNavigationMarkup(activeFilter = '') {
@@ -1546,13 +1556,12 @@ function renderPatients() {
           <thead><tr>
             <th>${patientNameSortMenuMarkup()}</th>
             <th>${patientStageFilterMenuMarkup(doctors)}</th>
-            <th>${patientHeaderSortButton('addTask', 'Ближайшая задача', 'Сортировать по ближайшей задаче')}</th>
             <th>Действия</th>
             <th>Примечание</th>
             <th>${patientHeaderSortButton('history', 'История')}</th>
           </tr></thead>
           <tbody>
-            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="6">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
+            ${patients.length ? patients.map(patientRow).join('') : `<tr><td class="empty-row" colspan="5">${patientFilters.taskDue === 'upcoming' ? 'Нет запланированных задач начиная с послезавтра' : 'По выбранным фильтрам пациентов не найдено'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1835,16 +1844,10 @@ function setupPatientDates(root) {
 }
 
 function patientRow(patient) {
-  const tasks = state.tasks.filter(task => task.patientId === patient.id && isTaskActive(task)).sort((a, b) => taskDueSortValue(a).localeCompare(taskDueSortValue(b)))
-  const nearestTask = tasks[0]
-  const taskCell = nearestTask
-    ? `<button type="button" class="nearest-task-cell ${isTaskOverdue(nearestTask) ? 'overdue' : ''}" data-patient-tasks="${patient.id}"><time>${esc(tableTaskDue(nearestTask))}</time><strong>${esc(compactTaskLabel(nearestTask))}</strong>${patientTaskIndicatorsMarkup(tasks)}</button>`
-    : `<button type="button" class="nearest-task-cell empty" data-patient-tasks="${patient.id}"><span class="no-active-tasks">Нет активных задач</span></button>`
   return `
     <tr data-patient="${patient.id}">
       <td><div class="patient-identity"><button type="button" class="patient-name-btn" data-open-patient="${patient.id}" title="Открыть карточку пациента"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong></button><small>${esc((patient.phones || []).join(' · '))}</small></div></td>
       <td class="patient-stage-cell">${patientStageTaskMarkup(patient)}</td>
-      <td>${taskCell}</td>
       <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" ${['appointment','invite_checkup'].includes(action.value) ? `data-patient-action="${action.value}"` : `data-patient-task-action="${action.value}"`} data-patient-id="${patient.id}">${action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
       <td class="history-cell" data-full-history="${patient.id}" tabindex="0" title="Открыть всю историю" aria-label="Открыть всю историю пациента ${esc(patient.name)}">${historyPreview(patient)}</td>
@@ -4238,7 +4241,7 @@ function renderSettings() {
 function settingsPanelMarkup(tab) {
   const actions = `<div class="settings-actions"><button class="btn" id="cancelSettings">Отмена</button><button class="btn" id="resetSettings">Вернуть настройки по умолчанию</button><button class="btn primary" id="applySettings">Применить</button></div>`
   if (tab === 'appearance') return `<h2>Внешний вид</h2><div class="theme-grid">${Object.entries(THEMES).map(([key,theme]) => `<button class="theme-card ${userSettings.appearance.theme === key ? 'active' : ''}" data-theme="${key}" style="--preview-bg:${theme.bg};--preview-surface:${theme.surface};--preview-primary:${theme.primary};--preview-text:${theme.text}"><b>${theme.name}</b><span class="theme-preview"><i></i><em>Кнопка</em><small>Строка таблицы</small></span>${userSettings.appearance.theme === key ? '<mark>Текущая</mark>' : ''}</button>`).join('')}</div><div class="settings-grid">${settingSelect('appearance','scale','Масштаб',[[85,'85%'],[90,'90%'],[100,'100%'],[110,'110%'],[125,'125%']])}${settingSelect('appearance','fontSize','Размер шрифта',[['small','Маленький'],['standard','Стандартный'],['large','Большой'],['xlarge','Очень большой']])}${settingSelect('appearance','density','Плотность',[['compact','Компактная'],['standard','Стандартная'],['spacious','Просторная']])}${settingSelect('appearance','radius','Скругление',[['minimal','Минимальное'],['medium','Среднее'],['large','Большое']])}${settingSelect('appearance','shadows','Тени окон',[['none','Выключены'],['light','Лёгкие'],['standard','Стандартные']])}${settingSelect('appearance','animations','Анимации',[['full','Полные'],['minimal','Минимальные'],['none','Выключены']])}</div>${settingCheck('appearance','icons','Показывать иконки в кнопках')}${settingCheck('appearance','tooltips','Подсказки при наведении')}${actions}`
-  if (tab === 'table') return `<h2>Таблица пациентов</h2><div class="settings-grid">${settingSelect('table','rowHeight','Высота строки',[[48,'48 px'],[58,'58 px'],[72,'72 px'],[90,'90 px']])}</div><div class="settings-check-grid">${settingCheck('table','stickyHeader','Закрепить заголовок')}${settingCheck('table','hover','Подсвечивать строку')}${settingCheck('table','verticalBorders','Вертикальные границы')}${settingCheck('table','horizontalBorders','Горизонтальные границы')}${settingCheck('table','striped','Чередовать фон строк')}${settingCheck('table','rowNumbers','Показывать номера строк')}${settingCheck('table','rememberWidths','Запоминать ширину столбцов')}${settingCheck('table','rememberOrder','Запоминать порядок столбцов')}${settingCheck('table','rememberSort','Запоминать сортировку')}${settingCheck('table','rememberFilters','Запоминать активные фильтры')}</div><h3>Видимые столбцы</h3><div class="column-settings">${PATIENT_COLUMNS.map(column => `<label><input type="checkbox" data-column-visibility="${column.key}" ${!userSettings.table.hiddenColumns.includes(column.key) ? 'checked' : ''} ${['name','addTask'].includes(column.key) ? 'disabled' : ''}><span>${column.key}</span></label>`).join('')}</div>${actions}`
+  if (tab === 'table') return `<h2>Таблица пациентов</h2><div class="settings-grid">${settingSelect('table','rowHeight','Высота строки',[[48,'48 px'],[58,'58 px'],[72,'72 px'],[90,'90 px']])}</div><div class="settings-check-grid">${settingCheck('table','stickyHeader','Закрепить заголовок')}${settingCheck('table','hover','Подсвечивать строку')}${settingCheck('table','verticalBorders','Вертикальные границы')}${settingCheck('table','horizontalBorders','Горизонтальные границы')}${settingCheck('table','striped','Чередовать фон строк')}${settingCheck('table','rowNumbers','Показывать номера строк')}${settingCheck('table','rememberWidths','Запоминать ширину столбцов')}${settingCheck('table','rememberOrder','Запоминать порядок столбцов')}${settingCheck('table','rememberSort','Запоминать сортировку')}${settingCheck('table','rememberFilters','Запоминать активные фильтры')}</div><h3>Видимые столбцы</h3><div class="column-settings">${PATIENT_COLUMNS.map(column => `<label><input type="checkbox" data-column-visibility="${column.key}" ${!userSettings.table.hiddenColumns.includes(column.key) ? 'checked' : ''} ${['name','status'].includes(column.key) ? 'disabled' : ''}><span>${column.key}</span></label>`).join('')}</div>${actions}`
   if (tab === 'tasks') return `<h2>Задачи и работа</h2><div class="settings-check-grid">${settingCheck('tasks','confirmCompletion','Подтверждать завершение задачи')}${settingCheck('tasks','confirmDeletion','Подтверждать удаление задачи')}${settingCheck('tasks','autoOpenNext','Автоматически открывать следующую задачу')}${settingCheck('tasks','showCompleted','Показывать выполненные задачи')}${settingCheck('tasks','overdueFirst','Просроченные задачи первыми')}${settingCheck('tasks','sortByDateTime','Сортировать по дате и времени')}${settingCheck('tasks','showComment','Показывать комментарий в списке')}${settingCheck('tasks','showAuthor','Показывать автора задачи')}${settingCheck('tasks','showTransferTime','Показывать время переноса')}</div>${actions}`
   if (tab === 'notifications') return `<h2>Уведомления</h2><div class="settings-check-grid">${settingCheck('notifications','toast','Всплывающие уведомления')}${settingCheck('notifications','sound','Звуковые уведомления')}${settingCheck('notifications','newTask','Новая задача')}${settingCheck('notifications','overdue','Просроченная задача')}${settingCheck('notifications','before15','Задача через 15 минут')}${settingCheck('notifications','before30','Задача через 30 минут')}${settingCheck('notifications','unfinishedShift','Незавершённая смена')}${settingCheck('notifications','counters','Счётчики в верхних карточках')}</div>${settingSelect('notifications','volume','Громкость',[['mute','Без звука'],['quiet','Тихо'],['standard','Стандартно']])}${actions}`
   if (tab === 'calendar') return `<h2>Календарь и даты</h2><div class="settings-grid">${settingSelect('calendar','firstDay','Первый день недели',[['monday','Понедельник'],['sunday','Воскресенье']])}${settingSelect('calendar','dateFormat','Формат даты',[['long','ДД.ММ.ГГГГ'],['short','ДД.ММ.ГГ']])}${settingSelect('calendar','timeFormat','Формат времени',[['24','24 часа'],['12','12 часов']])}${settingSelect('calendar','timeStep','Шаг времени',[[15,'15 минут'],[30,'30 минут'],[60,'60 минут']])}</div>${settingCheck('calendar','weekends','Показывать выходные')}${settingCheck('calendar','highlightToday','Подсвечивать сегодняшний день')}${actions}`
