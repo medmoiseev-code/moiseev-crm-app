@@ -68,14 +68,22 @@ export function createWorkflowTask(draft, patient, spec, actor = {}) {
   const existing = draft.tasks.find(task => taskActive(task) && task.idempotencyKey === idempotencyKey)
   if (existing) return existing
   const now = actor.now || new Date().toISOString()
-  const inheritedTreatmentId = spec.treatmentId || draft.tasks.find(item => item.id === spec.parentTaskId)?.treatmentId || null
+  let inheritedTreatmentId = spec.treatmentId || draft.tasks.find(item => item.id === spec.parentTaskId)?.treatmentId || null
+  if (!inheritedTreatmentId) {
+    patient.treatments ||= []
+    const waitlistEntry = spec.waitlistEntryId ? draft.waitlist?.find(item => item.id === spec.waitlistEntryId) : null
+    const lineName = waitlistEntry ? `Лист ожидания · ${waitlistEntry.customTreatment || waitlistEntry.treatment || 'Приём'}` : cleanTitle(spec.title) || 'Задача'
+    const line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:lineName, stage:spec.comment || `Запланировано на ${spec.dueDate}`, status:'active', createdAt:now, updatedAt:now }
+    patient.treatments.push(line)
+    inheritedTreatmentId = line.id
+  }
   const task = {
     id:makeId(), patientId:patient.id, type:spec.type, title:spec.title, dueDate:spec.dueDate, dueAt:validation.dueAt,
     assignee:spec.assignee || actor.name || '', note:spec.comment || '', comment:spec.comment || '',
     status:TASK_STATUS_ACTIVE, completedAt:null, createdAt:now, createdBy:actor.name || 'Система',
     workflowId:meta.workflowId, workflowType:meta.workflowType, parentTaskId:spec.parentTaskId || null,
     sourceEntityType:meta.sourceEntityType, sourceEntityId:meta.sourceEntityId, idempotencyKey,
-    treatmentId:inheritedTreatmentId, scope:inheritedTreatmentId ? 'treatment' : (spec.scope || 'patient'),
+    treatmentId:inheritedTreatmentId, scope:'treatment',
     ...(spec.waitlistEntryId ? { waitlistEntryId:spec.waitlistEntryId } : {}),
     ...(spec.appointmentId ? { appointmentId:spec.appointmentId } : {}),
   }
@@ -165,6 +173,9 @@ export function migrateBusinessState(input, actor = {}) {
       changed = true
     }
   }
+  const unlinkedTasks = draft.tasks.filter(task => taskActive(task) && !task.treatmentId).length
+  const coverageTasks = ensureTreatmentCoverage(draft, { ...actor, now })
+  if (unlinkedTasks || coverageTasks.length) changed = true
   if (changed && !draft.audit.some(item => item.action === 'business-state-migration-v1')) draft.audit.unshift({ id:makeId(), at:now, user:actor.name || 'Система', action:'business-state-migration-v1' })
   draft.businessMigrationVersion = Math.max(Number(draft.businessMigrationVersion) || 0, 1)
   return { state:draft, changed }
@@ -176,6 +187,18 @@ export function ensureTreatmentCoverage(draft, actor = {}) {
   const created = []
   for (const patient of draft.patients || []) {
     if (patient.status === DO_NOT_CONTACT_STATUS) continue
+    patient.treatments ||= []
+    for (const task of (draft.tasks || []).filter(item => item.patientId === patient.id && taskActive(item) && !item.treatmentId)) {
+      const workflowLineId = draft.tasks.find(item => item.patientId === patient.id && item.workflowId === task.workflowId && item.treatmentId)?.treatmentId
+      let line = patient.treatments.find(item => item.id === workflowLineId)
+      if (!line) {
+        const waitlistEntry = task.waitlistEntryId ? draft.waitlist?.find(item => item.id === task.waitlistEntryId) : null
+        line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:waitlistEntry ? `Лист ожидания · ${waitlistEntry.customTreatment || waitlistEntry.treatment || 'Приём'}` : cleanTitle(task.title) || 'Задача', stage:task.comment || task.note || `Запланировано на ${task.dueDate}`, status:'active', createdAt:task.createdAt || now, updatedAt:now }
+        patient.treatments.push(line)
+      }
+      task.treatmentId = line.id
+      task.scope = 'treatment'
+    }
     for (const treatment of (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))) {
       if ((draft.tasks || []).some(task => task.patientId === patient.id && task.treatmentId === treatment.id && taskActive(task))) continue
       created.push(createWorkflowTask(draft, patient, {
@@ -217,7 +240,7 @@ export function validateBusinessState(state, options = {}) {
       const owner = patients.find(patient => patient.id === task.patientId)
       if (!owner?.treatments?.some(treatment => treatment.id === task.treatmentId)) errors.push({ code:'orphan_treatment_task', taskId:task.id, patientId:task.patientId, message:'Задача ссылается на отсутствующее лечение' })
     }
-    if (taskActive(task) && !task.treatmentId && task.scope !== 'patient' && task.scope !== 'system') errors.push({ code:'task_without_scope', taskId:task.id, patientId:task.patientId, message:'Активная задача не привязана к линии и не отмечена как общая задача пациента' })
+    if (taskActive(task) && !task.treatmentId) errors.push({ code:'task_without_scope', taskId:task.id, patientId:task.patientId, message:'Активная задача не привязана к этапу и линии' })
     if (!KNOWN_TASK_TYPES.has(task.type)) warnings.push({ code:'unknown_task_type', taskId:task.id, message:`Неизвестный тип задачи: ${task.type}` })
     if (task.status === 'open') warnings.push({ code:'legacy_open_status', taskId:task.id, message:'Устаревший статус open' })
     if (taskActive(task) && task.dueAt && new Date(task.dueAt).getTime() < (options.now ? new Date(options.now).getTime() : Date.now())) warnings.push({ code:'overdue_task', taskId:task.id, message:'Активная задача просрочена' })

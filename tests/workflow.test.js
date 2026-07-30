@@ -53,11 +53,12 @@ describe('workflow core', () => {
     expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'treatment_without_action')).toBe(false)
   })
 
-  it('requires an explicit scope for an unlinked active task', () => {
+  it('does not allow an active task to remain without its own line', () => {
     const state = base({ tasks:[task({ treatmentId:null,scope:null })] })
     expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'task_without_scope')).toBe(true)
-    state.tasks[0].scope = 'patient'
+    ensureTreatmentCoverage(state,actor)
     expect(validateBusinessState(state,{ now:NOW }).errors.some(item => item.code === 'task_without_scope')).toBe(false)
+    expect(Boolean(state.tasks[0].treatmentId)).toBe(true)
   })
 
   it('rolls back when outcome has no related continuation', () => {
@@ -116,6 +117,8 @@ describe('workflow core', () => {
     const state = base({ patients:[patient({ appointmentDate:'2030-01-05', appointmentAt:'2030-01-05T12:00:00' })], tasks:[], waitlist:[{ id:'w1',patientId:'p1',status:'active',comment:'Ожидает другое направление' }] })
     const created = ensureWaitlistTask(state,'w1',actor,{dueDate:'2030-01-02',dueTime:'10:00'})
     expect(created).toMatchObject({ type:'waitlist',waitlistEntryId:'w1',status:'active' })
+    expect(Boolean(created.treatmentId)).toBe(true)
+    expect(state.patients[0].treatments.some(item => item.id === created.treatmentId && item.kind === 'waitlist')).toBe(true)
   })
 
   it('repeated waitlist migration does not duplicate tasks or audit', () => {

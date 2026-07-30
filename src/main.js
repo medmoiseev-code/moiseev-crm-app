@@ -2588,12 +2588,10 @@ function openTaskDrawer(patientId, showForm = false) {
     const typeLabel = TASK_TYPES.find(item => item.value === type)?.label || 'Задача'
     const comment = overlay.querySelector('#drawerTaskComment').value.trim()
     const createdAt = new Date().toISOString()
-    const activeTreatments = (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))
-    const automaticTreatmentId = activeTreatments.length === 1 ? activeTreatments[0].id : null
     const task = {
       id: uid(), patientId, type, title: typeLabel, dueDate, dueAt:dueTime ? `${dueDate}T${dueTime}:00` : null, comment, note: comment,
       assignee: overlay.querySelector('#drawerTaskAssignee').value, reminderTarget: type === 'reminder' ? overlay.querySelector('#drawerReminderTarget').value : null,
-      treatmentId:automaticTreatmentId, scope:automaticTreatmentId ? 'treatment' : 'patient',
+      treatmentId:null, scope:'patient',
       status: 'active', completedAt: null, createdAt, createdBy: currentUser.name,
       history: [{ id:uid(), at:createdAt, author:currentUser.name, action:'created', text:taskHistoryText(type, typeLabel, dueDate, comment) }],
     }
@@ -2882,8 +2880,7 @@ function createWorkflowTask(patient, spec, createdAt = new Date().toISOString())
   }
   if (!effectiveSpec.treatmentId) {
     const parentTreatmentId = state.tasks.find(item => item.id === effectiveSpec.parentTaskId)?.treatmentId
-    const activeTreatments = (patient.treatments || []).filter(item => ['active','waiting'].includes(item.status))
-    effectiveSpec.treatmentId = parentTreatmentId || (activeTreatments.length === 1 ? activeTreatments[0].id : null)
+    effectiveSpec.treatmentId = parentTreatmentId || null
   }
   const task = createWorkflowTaskCore(state, patient, effectiveSpec, { id:currentUser?.id, name:currentUser?.name || 'Система', now:createdAt })
   if (spec.reminderMethod) task.reminderMethod = spec.reminderMethod
@@ -3989,7 +3986,7 @@ function openTaskModal(taskId = null, presetPatientId = null, presetType = null)
       <div class="task-form">
         ${fixedPatient ? `<input type="hidden" id="tPatient" value="${esc(fixedPatient.id)}">` : `<label class="field"><span>Пациент</span><select id="tPatient"><option value="">Выберите пациента</option>${[...state.patients].sort((a,b)=>a.name.localeCompare(b.name)).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>`}
         <input type="hidden" id="tType" value="${esc(task.type)}">
-        ${fixedPatient && (fixedPatient.treatments || []).filter(item => ['active','waiting'].includes(item.status)).length ? `<label class="field span-2"><span>Лечение / этап</span><select id="tTreatment"><option value="">Общая задача пациента</option>${fixedPatient.treatments.filter(item => ['active','waiting'].includes(item.status)).map((item,index,array) => `<option value="${item.id}" ${task.treatmentId === item.id || (!original && !task.treatmentId && array.length === 1) ? 'selected' : ''}>${esc(item.name)} · ${esc(item.stage || 'этап не указан')}</option>`).join('')}</select></label>` : '<input type="hidden" id="tTreatment" value="">'}
+        ${fixedPatient && (fixedPatient.treatments || []).filter(item => ['active','waiting'].includes(item.status)).length ? `<label class="field span-2"><span>Лечение / этап</span><select id="tTreatment"><option value="">Новая линия для этой задачи</option>${fixedPatient.treatments.filter(item => ['active','waiting'].includes(item.status)).map(item => `<option value="${item.id}" ${task.treatmentId === item.id ? 'selected' : ''}>${esc(item.name)} · ${esc(item.stage || 'этап не указан')}</option>`).join('')}</select></label>` : '<input type="hidden" id="tTreatment" value="">'}
         <label class="field" id="tContactReasonField"><span>Цель связи</span><select id="tContactReason">${CONTACT_REASONS.map(([value,label]) => `<option value="${value}" ${task.actionReason === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field" id="tContactRecipientField"><span>С кем связаться</span><select id="tContactRecipient">${CONTACT_RECIPIENTS.map(([value,label]) => `<option value="${value}" ${task.contactRecipient === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
         <label class="field span-2" id="tContactChannelField"><span>Способ связи</span><div class="contact-channel-control"><select class="hidden" id="tContactChannel">${CONTACT_CHANNELS.map(([value,label]) => `<option value="${value}" ${(task.contactChannel || 'call') === value ? 'selected' : ''}>${label}</option>`).join('')}</select><div class="contact-channel-options">${CONTACT_CHANNELS.map(([value,label]) => `<button type="button" data-contact-channel="${value}" class="${(task.contactChannel || 'call') === value ? 'active' : ''}">${value === 'max' ? '<i class="max-channel-choice-icon" aria-hidden="true"></i>' : ''}<span>${label}</span></button>`).join('')}</div></div></label>
