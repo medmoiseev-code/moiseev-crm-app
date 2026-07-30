@@ -1824,7 +1824,7 @@ function patientRow(patient) {
   return `
     <tr data-patient="${patient.id}">
       <td><div class="patient-identity"><button type="button" class="patient-name-btn" data-open-patient="${patient.id}" title="Открыть карточку пациента"><strong>${esc(patient.name)} ${specialNoteBadge(patient)}</strong></button><small>${esc((patient.phones || []).join(' · '))}</small></div></td>
-      <td>${patientStageTaskMarkup(patient)}</td>
+      <td class="patient-stage-cell">${patientStageTaskMarkup(patient)}</td>
       <td>${taskCell}</td>
       <td class="patient-action-cell"><div class="patient-action-menu-wrap"><button type="button" class="patient-action-button" data-action-menu-toggle aria-expanded="false" title="Создать действие" aria-label="Создать действие">＋</button><div class="patient-action-menu patient-action-menu-right hidden" data-action-menu>${PATIENT_ACTIONS.map(action => `<button type="button" ${['appointment','invite_checkup'].includes(action.value) ? `data-patient-action="${action.value}"` : `data-patient-task-action="${action.value}"`} data-patient-id="${patient.id}">${action.label}</button>`).join('')}<button type="button" data-add-waitlist="${patient.id}">⏳ Добавить в лист ожидания</button></div></div></td>
       <td class="wrap-cell comment-cell" data-comment-cell="${patient.id}" data-comment-kind="admin">${inlineCommentMarkup(patient, 'admin')}</td>
