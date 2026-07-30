@@ -584,6 +584,7 @@ function undoLastChange() {
 }
 
 function saveState(action = 'Изменение данных') {
+  for (const entry of (state.waitlist || []).filter(item => item.status !== 'removed')) ensureWaitlistTask(entry.id)
   const safetyTasks = ensureTreatmentCoverage(state, { id:currentUser?.id, name:currentUser?.name || 'Система', now:new Date().toISOString() })
   for (const task of safetyTasks) {
     const patient = state.patients.find(item => item.id === task.patientId)
@@ -2839,7 +2840,7 @@ function openWaitlistEntryModal(patientId = null, entryId = null) {
     if (existing) Object.assign(existing, entry)
     else state.waitlist.push(entry)
     const selectedPatient = newPatient || state.patients.find(item => item.id === selectedPatientId)
-    if (!selectedPatient?.appointmentDate) ensureWaitlistTask(existing || entry)
+    ensureWaitlistTask(existing || entry)
     saveState(`${existing ? 'Изменена запись' : 'Добавлен пациент'} в листе ожидания`)
     updateWaitlistNavCount()
     close()

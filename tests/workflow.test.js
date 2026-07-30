@@ -112,6 +112,12 @@ describe('workflow core', () => {
     expect(created).toMatchObject({ waitlistEntryId:'w1',sourceEntityType:'waitlist',sourceEntityId:'w1',workflowType:'waitlist',workflowId:'waitlist:w1' })
   })
 
+  it('creates a waitlist task even when the patient already has an appointment', () => {
+    const state = base({ patients:[patient({ appointmentDate:'2030-01-05', appointmentAt:'2030-01-05T12:00:00' })], tasks:[], waitlist:[{ id:'w1',patientId:'p1',status:'active',comment:'Ожидает другое направление' }] })
+    const created = ensureWaitlistTask(state,'w1',actor,{dueDate:'2030-01-02',dueTime:'10:00'})
+    expect(created).toMatchObject({ type:'waitlist',waitlistEntryId:'w1',status:'active' })
+  })
+
   it('repeated waitlist migration does not duplicate tasks or audit', () => {
     const initial = base({ tasks:[], waitlist:[{ id:'w1',patientId:'p1',status:'active' }] })
     const once = migrateBusinessState(initial,actor).state
