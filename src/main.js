@@ -371,6 +371,18 @@ function compactTaskLabel(task) {
   return `${icon} ${title}`.trim()
 }
 
+function treatmentTaskLabel(task, doctor) {
+  const label = compactTaskLabel(task)
+  if (!doctor || doctor === 'Врач не указан') return label
+  return label
+    .replaceAll(` · ${doctor}`, '')
+    .replaceAll(`, врач ${doctor}`, '')
+    .replaceAll(doctor, '')
+    .replace(/\s*[·,—-]\s*$/u, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 function taskIndicatorIcon(task) {
   if (task?.type === 'reminder' && task.reminderTarget === 'doctor') return '👨‍⚕️'
   const icons = {
@@ -437,7 +449,7 @@ function patientStageTaskMarkup(patient) {
       : treatment.kind === 'checkup'
         ? `🦷 Проф. осмотр${checkupDate ? ` ${formatDate(checkupDate)}` : ''}`
         : genericStatus
-    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<span class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(compactTaskLabel(nextTask))}</span></span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
+    return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<span class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(treatmentTaskLabel(nextTask, doctor))}</span></span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
   return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`
 }
