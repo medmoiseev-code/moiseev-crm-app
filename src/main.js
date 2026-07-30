@@ -412,11 +412,31 @@ function patientStageTaskMarkup(patient) {
     const appointmentDate = treatment.appointmentAt?.slice(0,10)
     const appointmentTime = treatment.appointmentAt?.slice(11,16)
     const checkupDate = treatment.dueAt?.slice(0,10) || nextTask?.dueDate
+    const routeDate = nextTask?.dueDate || treatment.dueAt?.slice(0,10)
+    const routeTime = nextTask?.dueAt?.slice(11,16) || treatment.dueAt?.slice(11,16)
+    const routeSchedule = routeDate ? ` ${formatDate(routeDate)}${routeTime ? ` в ${routeTime}` : ''}` : ''
+    const routeType = nextTask?.type || treatment.kind
+    const internalStatus = nextTask?.actionObject === 'ct' ? `📷 ${nextTask.actionReason === 'wait' ? 'Ожидается' : 'Работа с'} КТ или анализами${routeSchedule}`
+      : nextTask?.actionObject === 'laboratory' ? `🧪 ${nextTask.actionReason === 'wait' ? 'Ожидается' : 'Работа с'} лабораторией${routeSchedule}`
+      : nextTask?.actionObject === 'documents' ? `📄 Работа с документами${routeSchedule}`
+      : nextTask?.actionObject === 'payment' ? `💳 Финансовый вопрос${routeSchedule}`
+      : nextTask?.actionObject === 'doctor' ? `👨‍⚕️ Ожидается решение врача${routeSchedule}`
+      : `⚙️ Внутренняя работа${routeSchedule}`
+    const genericStatus = routeType === 'waitlist' || treatment.kind === 'waitlist' ? `⏳ Лист ожидания${routeSchedule}`
+      : ['contact','call','write','message'].includes(routeType) ? `📞 Требуется связь${routeSchedule}`
+      : routeType === 'internal' ? internalStatus
+      : routeType === 'reminder' ? `🔔 Напоминание${routeSchedule}`
+      : routeType === 'decision' ? `🤔 Ожидается решение${routeSchedule}`
+      : routeType === 'documents' ? `📄 Документы${routeSchedule}`
+      : routeType === 'request_image' ? `📷 Ожидается КТ или снимок${routeSchedule}`
+      : ['postop_control','implant_check','control'].includes(routeType) ? `🔎 Контроль${routeSchedule}`
+      : treatment.kind === 'treatment' ? `🦷 На лечении${routeSchedule}`
+      : `🦷 Активный этап${routeSchedule}`
     const statusLabel = appointmentDate
       ? `📅 Записан на приём ${formatDate(appointmentDate)}${appointmentTime ? ` в ${appointmentTime}` : ''}`
       : treatment.kind === 'checkup'
         ? `🦷 Проф. осмотр${checkupDate ? ` ${formatDate(checkupDate)}` : ''}`
-        : `${treatment.status === 'waiting' ? '⏳' : '🦷'} ${treatment.name}`
+        : genericStatus
     return `<span class="treatment-line ${protectedByTask ? '' : 'at-risk'} ${index >= 3 ? 'treatment-line-extra hidden' : ''}" title="${protectedByTask ? 'Есть следующее действие' : 'Нет следующей задачи — риск потери'}"><span class="treatment-route-node treatment-route-name"><b>${esc(statusLabel)}</b></span><span class="treatment-route-arrow" aria-hidden="true">→</span><span class="treatment-route-node treatment-stage-text">${esc(doctor)}</span><span class="treatment-route-arrow" aria-hidden="true">→</span>${nextTask ? `<span class="treatment-route-node treatment-next-action ${isTaskOverdue(nextTask) ? 'overdue' : ''}"><time>${esc(tableTaskDue(nextTask))}</time><span>${esc(compactTaskLabel(nextTask))}</span></span>` : '<span class="treatment-route-node treatment-next-action missing">Нет следующего действия</span>'}<i>${protectedByTask ? '✓' : '!'}</i></span>`
   }).join('')
   return `<span class="treatment-lines" data-treatment-lines>${rows}${treatments.length > 3 ? `<button type="button" class="treatment-more" data-expand-treatment-lines>+ ещё ${treatments.length - 3}</button>` : ''}</span>`

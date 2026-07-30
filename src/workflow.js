@@ -73,7 +73,7 @@ export function createWorkflowTask(draft, patient, spec, actor = {}) {
     patient.treatments ||= []
     const waitlistEntry = spec.waitlistEntryId ? draft.waitlist?.find(item => item.id === spec.waitlistEntryId) : null
     const lineName = waitlistEntry ? `Лист ожидания · ${waitlistEntry.customTreatment || waitlistEntry.treatment || 'Приём'}` : cleanTitle(spec.title) || 'Задача'
-    const line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:lineName, doctor:waitlistEntry?.doctor || '', stage:spec.comment || `Запланировано на ${spec.dueDate}`, status:'active', createdAt:now, updatedAt:now }
+    const line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:lineName, doctor:waitlistEntry?.doctor || '', stage:spec.comment || `Запланировано на ${spec.dueDate}`, dueAt:validation.dueAt, status:'active', createdAt:now, updatedAt:now }
     patient.treatments.push(line)
     inheritedTreatmentId = line.id
   }
@@ -193,7 +193,7 @@ export function ensureTreatmentCoverage(draft, actor = {}) {
       let line = patient.treatments.find(item => item.id === workflowLineId)
       if (!line) {
         const waitlistEntry = task.waitlistEntryId ? draft.waitlist?.find(item => item.id === task.waitlistEntryId) : null
-        line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:waitlistEntry ? `Лист ожидания · ${waitlistEntry.customTreatment || waitlistEntry.treatment || 'Приём'}` : cleanTitle(task.title) || 'Задача', doctor:waitlistEntry?.doctor || '', stage:task.comment || task.note || `Запланировано на ${task.dueDate}`, status:'active', createdAt:task.createdAt || now, updatedAt:now }
+        line = { id:makeId(), kind:waitlistEntry ? 'waitlist' : 'task', name:waitlistEntry ? `Лист ожидания · ${waitlistEntry.customTreatment || waitlistEntry.treatment || 'Приём'}` : cleanTitle(task.title) || 'Задача', doctor:waitlistEntry?.doctor || '', stage:task.comment || task.note || `Запланировано на ${task.dueDate}`, dueAt:task.dueAt || `${task.dueDate}T10:00:00`, status:'active', createdAt:task.createdAt || now, updatedAt:now }
         patient.treatments.push(line)
       }
       task.treatmentId = line.id
