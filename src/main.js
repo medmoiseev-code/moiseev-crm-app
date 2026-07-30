@@ -76,7 +76,7 @@ const PATIENT_SORT_KEY = storageKey('moiseev_admin_crm_patient_sort_v01')
 const PATIENT_FILTERS_KEY = storageKey('moiseev_admin_crm_patient_filters_v01')
 const PATIENT_COLUMNS = [
   { key: 'name', width: 255 },
-  { key: 'status', width: 560 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
+  { key: 'status', width: 650 }, { key: 'addTask', width: 220 }, { key: 'actions', width: 82 },
   { key: 'adminNote', width: 300 }, { key: 'history', width: 490 },
 ]
 
@@ -1187,7 +1187,7 @@ function loadPatientTableSettings() {
     }
     if (widths.history === 360) widths.history = 450
     if (widths.addTask === 105) widths.addTask = 190
-    if ([200,300,480].includes(widths.status)) widths.status = 560
+    if ([200,300,480,560].includes(widths.status)) widths.status = 650
     if (saved.rowHeights && typeof saved.rowHeights === 'object' && !Array.isArray(saved.rowHeights)) {
       for (const [patientId, savedHeight] of Object.entries(saved.rowHeights)) {
         const height = Number(savedHeight)
