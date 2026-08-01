@@ -94,7 +94,7 @@ describe('workflow core', () => {
 
   it('confirmed appointment creates result-control task', () => {
     const state = base({ patients:[patient({ status:'📅 Записан на приём', appointmentDate:'2030-01-03', appointmentId:'a1' })], tasks:[task({ workflowType:'appointment',workflowId:'appointment:a1',sourceEntityType:'appointment',sourceEntityId:'a1' })] })
-    const result = applyTaskOutcome({ state,taskId:'t1',outcome:'confirmed',actor,reducer:({draft,task:source,patient:p}) => createWorkflowTask(draft,p,{type:'control',title:'Проверить результат приёма',dueDate:'2030-01-03',dueTime:'12:00',workflowType:'appointment',workflowId:source.workflowId,parentTaskId:source.id,sourceEntityType:'appointment',sourceEntityId:'a1',idempotencyKey:'appointment-result:a1'},actor) })
+    const result = applyTaskOutcome({ state,taskId:'t1',outcome:'confirmed',actor,reducer:({draft,task:source,patient:p}) => createWorkflowTask(draft,p,{type:'control',title:'Результат приёма',dueDate:'2030-01-03',dueTime:'12:00',workflowType:'appointment',workflowId:source.workflowId,parentTaskId:source.id,sourceEntityType:'appointment',sourceEntityId:'a1',idempotencyKey:'appointment-result:a1'},actor) })
     expect(result.state.tasks.some(item => item.idempotencyKey === 'appointment-result:a1')).toBe(true)
   })
 

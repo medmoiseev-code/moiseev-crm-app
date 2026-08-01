@@ -3503,7 +3503,7 @@ function openAppointmentConfirmationResult(task, patient, options = {}) {
         patient.appointmentId = appointmentId
         const resultAt = validateFutureDateTime(appointmentDate, appointmentTime, { defaultTime:'10:00' }).valid ? appointmentTime : localDateTimeValue(new Date(Date.now() + 5 * 60000)).slice(11,16)
         const resultDate = validateFutureDateTime(appointmentDate, resultAt).valid ? appointmentDate : localDateTimeValue(new Date(Date.now() + 5 * 60000)).slice(0,10)
-        createWorkflowTask(patient, { type:'control', title:'Проверить результат приёма', dueDate:resultDate, dueTime:resultAt, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, appointmentId, idempotencyKey:`appointment-result:${appointmentId}` }, now)
+        createWorkflowTask(patient, { type:'control', title:'Результат приёма', dueDate:resultDate, dueTime:resultAt, workflowType:'appointment', workflowId:`appointment:${appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:appointmentId, appointmentId, idempotencyKey:`appointment-result:${appointmentId}` }, now)
         patient.history.unshift(createHistoryEntry('action', `Подтвердила приём на ${formatDate(appointmentDate)} в ${appointmentTime}.`, { actionIcon:'📞', taskType:'call' }))
       } else {
         const noAction = modal.querySelector('[name="confirmationNoAction"]:checked')?.value || 'move'
