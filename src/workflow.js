@@ -307,7 +307,7 @@ export function applyDecisionOutcome({ state, taskId, formData = {}, actor = {} 
   const assignee = String(formData.assignee || '').trim()
   if (!subject) throw new Error('Укажите, по какому вопросу пациент принимает решение')
   if (!DECISION_REASON_CODES.has(reasonCode) || !reason) throw new Error('Укажите причину, почему решение пока не принято')
-  if (reasonCode === 'other' && !otherReason) throw new Error('Для причины «Другое» нужен комментарий')
+  if (reasonCode === 'other' && !otherReason) throw new Error('Для причины «Другое» нужно примечание')
   if (!assignee) throw new Error('Выберите ответственного администратора')
   const schedule = validateFutureDateTime(formData.dueDate, formData.dueTime, { now:actor.now })
   if (!schedule.valid) throw new Error(schedule.error)
