@@ -97,7 +97,7 @@ export function ensureWaitlistTask(draft, waitlistEntryId, actor = {}, schedule 
   const patient = draft.patients.find(item => item.id === entry.patientId)
   if (!patient) throw new Error('Пациент записи ожидания не найден')
   const workflowId = `waitlist:${entry.id}`
-  const linked = draft.tasks.filter(task => taskActive(task) && task.type === 'waitlist' && task.waitlistEntryId === entry.id)
+  const linked = draft.tasks.filter(task => taskActive(task) && task.waitlistEntryId === entry.id)
   if (linked.length) {
     linked.slice(1).forEach(task => { task.status = TASK_STATUS_CANCELLED; task.updatedAt = actor.now || new Date().toISOString() })
     return linked[0]

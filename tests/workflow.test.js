@@ -129,6 +129,13 @@ describe('workflow core', () => {
     expect(twice.audit.filter(item => item.action === 'business-state-migration-v1')).toHaveLength(1)
   })
 
+  it('does not duplicate waitlist control when a linked callback is active', () => {
+    const state = base({ patients:[patient({ treatments:[{ id:'tr1',kind:'waitlist',name:'Лист ожидания',status:'active' }] })], waitlist:[{ id:'w1',patientId:'p1',status:'active',treatment:'Консультация' }], tasks:[task({ id:'callback1',type:'call',title:'Повторный звонок',waitlistEntryId:'w1',workflowId:'waitlist:w1',treatmentId:'tr1' })] })
+    const linkedTask = ensureWaitlistTask(state,'w1',actor)
+    expect(linkedTask.id).toBe('callback1')
+    expect(state.tasks).toHaveLength(1)
+  })
+
   for (const status of ['🆕 Новый','🦷 На лечении','📅 Записан на приём']) {
     it(`${status} remains unchanged when decision is not made`, () => {
       const state = base({ patients:[patient({ status, ...(status === '📅 Записан на приём' ? { appointmentDate:'2030-01-05' } : {}) })] })

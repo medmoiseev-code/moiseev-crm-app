@@ -434,7 +434,9 @@ function patientStageTaskMarkup(patient) {
       : nextTask?.actionObject === 'payment' ? `💳 Финансовый вопрос${routeSchedule}`
       : nextTask?.actionObject === 'doctor' ? `👨‍⚕️ Ожидается решение врача${routeSchedule}`
       : `⚙️ Внутренняя работа${routeSchedule}`
-    const genericStatus = routeType === 'waitlist' || treatment.kind === 'waitlist' ? `⏳ Лист ожидания${routeSchedule}`
+    const genericStatus = treatment.kind === 'waitlist' && treatment.waitlistState === 'no_contact' ? `📞 Не удалось связаться${routeSchedule}`
+      : treatment.kind === 'waitlist' && treatment.waitlistState === 'waiting' ? `⏳ Остаётся в листе ожидания${routeSchedule}`
+      : routeType === 'waitlist' || treatment.kind === 'waitlist' ? `⏳ Лист ожидания${routeSchedule}`
       : ['contact','call','write','message'].includes(routeType) ? `📞 Требуется связь${routeSchedule}`
       : routeType === 'internal' ? internalStatus
       : routeType === 'reminder' ? `🔔 Напоминание${routeSchedule}`
@@ -2122,7 +2124,6 @@ function openPatientModal(patientId = null, options = {}) {
     .filter(task => task.patientId === patient.id)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
   const activePatientTasks = patientTasks.filter(isTaskActive)
-  const completedPatientTasks = patientTasks.filter(isTaskCompleted)
   const nearestTask = activePatientTasks[0] || null
   const waitlistEntry = activeWaitlistEntries().find(entry => entry.patientId === patient.id)
   const patientHistory = commentHistory(patient.history)
@@ -2142,7 +2143,6 @@ function openPatientModal(patientId = null, options = {}) {
         ${specialNoteCardMarkup(patient, original)}
         ${original ? `<section class="patient-card-section treatments-section"><div class="compact-section-head"><h3>Лечения · ${(patient.treatments || []).length}</h3><button class="btn" id="addTreatmentBtn">+ Лечение</button></div><div class="treatment-card-list">${patientTreatmentsMarkup(patient)}</div></section>` : ''}
         ${original ? `<section class="patient-card-section active-tasks-section"><div class="compact-section-head"><h3>Активные задачи · ${activePatientTasks.length}</h3><div class="compact-section-actions"><button class="btn ${waitlistEntry ? 'waitlist-active-btn' : ''}" id="addWaitlistBtn">⏳ ${waitlistEntry ? 'В листе ожидания' : 'Лист ожидания'}</button><button class="btn" id="addTaskBtn">+ Задача</button></div></div><div class="compact-task-list">${activePatientTasks.length ? activePatientTasks.slice(0,3).map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Активных задач нет</div>'}</div>${activePatientTasks.length > 3 ? `<details class="more-patient-tasks"><summary>Показать все · ${activePatientTasks.length}</summary><div class="compact-task-list">${activePatientTasks.slice(3).map(compactPatientTaskMarkup).join('')}</div></details>` : ''}</section>` : ''}
-        <details class="patient-card-section completed-tasks-section"><summary>Выполненные задачи · ${completedPatientTasks.length}</summary><div class="compact-task-list">${completedPatientTasks.length ? completedPatientTasks.map(compactPatientTaskMarkup).join('') : '<div class="compact-empty">Выполненных задач нет</div>'}</div></details>
         <section class="patient-card-section compact-history-section"><div class="compact-section-head"><h3>История · ${patientHistory.length} записей</h3><button type="button" class="text-action" data-open-full-history>Открыть всю историю</button></div><div class="history-list">${patientHistory.length ? patientHistory.slice(0,4).map(item => historyEntryMarkup(item, true)).join('') : '<div class="compact-empty">История пока пустая</div>'}</div></section>
         <div class="dialog-actions"><button class="btn" data-close>Отмена</button><button class="btn primary" id="savePatient">Сохранить</button></div>
       </div>
@@ -3360,6 +3360,10 @@ function openSimpleTaskExecution(task, kind, options = {}) {
       const dueTime = readManualTime(modal, 'simpleRetry')
       if (!dueDate || !dueTime) return
       completeTaskRecord(task, now, selected[1], comment)
+      if (kind === 'waitlist') {
+        const waitlistTreatment = patient.treatments?.find(item => item.id === task.treatmentId)
+        if (waitlistTreatment) Object.assign(waitlistTreatment, { waitlistState:value, stage:value === 'no_contact' ? 'Не удалось связаться — повторный звонок' : 'Остаётся в листе ожидания', dueAt:`${dueDate}T${dueTime}:00`, status:'active', updatedAt:now })
+      }
       const continuation = kind === 'waitlist'
         ? (value === 'no_contact' ? { type:'call', title:'📞 Повторный звонок по листу ожидания' } : { type:'waitlist', title:'⏳ Проверить лист ожидания' })
         : kind === 'checkup'
@@ -3384,6 +3388,8 @@ function openSimpleTaskExecution(task, kind, options = {}) {
         patient.status = '📅 Записан на приём'
         const deadline = appointmentConfirmationDeadline(appointmentDate)
         patient.appointmentId = uid()
+        const waitlistTreatment = kind === 'waitlist' ? patient.treatments?.find(item => item.id === task.treatmentId) : null
+        if (waitlistTreatment) Object.assign(waitlistTreatment, { status:'completed', stage:'Записан на приём', updatedAt:now })
         const treatment = ensureAppointmentTreatment(patient, { doctor, date:appointmentDate, time:appointmentTime, appointmentId:patient.appointmentId, now })
         createWorkflowTask(patient, { type:'call', title:`📞 Подтвердить приём · ${doctor}`, dueDate:deadline.dueDate, dueAt:deadline.dueAt, comment:`Подтвердить запись на ${formatDate(appointmentDate)} в ${appointmentTime}`, appointmentId:patient.appointmentId, treatmentId:treatment.id, workflowType:'appointment', workflowId:`appointment:${patient.appointmentId}`, parentTaskId:task.id, sourceEntityType:'appointment', sourceEntityId:patient.appointmentId, idempotencyKey:`appointment-confirmation:${patient.appointmentId}` }, now)
       }
@@ -3391,11 +3397,20 @@ function openSimpleTaskExecution(task, kind, options = {}) {
       patient.history ||= []
       patient.history.unshift(createHistoryEntry('task_completed', `${selected[1]}.`, { actionIcon:taskIndicatorIcon(task), taskType:task.type }))
       if (kind === 'waitlist' && ['booked','refused'].includes(value)) {
-        const waitlistEntry = activeWaitlistEntries().find(entry => entry.patientId === patient.id)
+        const waitlistEntry = activeWaitlistEntries().find(entry => entry.id === task.waitlistEntryId) || activeWaitlistEntries().find(entry => entry.patientId === patient.id)
         if (waitlistEntry) { waitlistEntry.status = 'removed'; waitlistEntry.removedAt = now; waitlistEntry.removedBy = currentUser.name }
         if (value === 'refused') patient.status = '❌ Отказ'
       }
-      if (selected[3] !== 'appointment') ensureSimpleOutcomeContinuation(kind, value, patient, task, now)
+      if (selected[3] !== 'appointment') {
+        const continuation = ensureSimpleOutcomeContinuation(kind, value, patient, task, now)
+        if (kind === 'waitlist' && value === 'refused') {
+          const waitlistTreatment = patient.treatments?.find(item => item.id === task.treatmentId)
+          if (waitlistTreatment) Object.assign(waitlistTreatment, { status:'completed', stage:'Отказался от ожидания', updatedAt:now })
+          const refusalLine = ensureCareTreatment(patient, { name:'Контроль после отказа', stage:'Контрольный контакт после отказа', now })
+          continuation.task.treatmentId = refusalLine.id
+          continuation.task.scope = 'treatment'
+        }
+      }
     }
     if (!state.tasks.some(item => item.patientId === patient.id && item.id !== task.id && isTaskActive(item) && (item.parentTaskId === task.id || item.workflowId === task.workflowId || item.sourceEntityId === task.id))) throw new Error('Результат не определил связанное следующее действие для пациента')
     patient.updatedAt = now; patient.updatedBy = currentUser.name
