@@ -139,6 +139,7 @@ export function migrateBusinessState(input, actor = {}) {
   let changed = false
   // TODO: согласовать отдельные правила миграции удалённых legacy-этапов из старых резервных копий.
   draft.tasks.forEach(task => {
+    if (/^проверить результат при[её]ма$/iu.test(cleanTitle(task.title))) { task.title = 'Результат приёма'; changed = true }
     if (task.status === 'open') { task.status = TASK_STATUS_ACTIVE; changed = true }
     const expectedScope = task.treatmentId ? 'treatment' : (task.scope || 'patient')
     if (task.scope !== expectedScope) { task.scope = expectedScope; changed = true }

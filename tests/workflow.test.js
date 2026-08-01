@@ -136,6 +136,13 @@ describe('workflow core', () => {
     expect(state.tasks).toHaveLength(1)
   })
 
+  it('renames the legacy appointment result task', () => {
+    const state = base({ tasks:[task({ type:'control', title:'Проверить результат приёма' })] })
+    const migrated = migrateBusinessState(state, actor)
+    expect(migrated.changed).toBe(true)
+    expect(migrated.state.tasks[0].title).toBe('Результат приёма')
+  })
+
   for (const status of ['🆕 Новый','🦷 На лечении','📅 Записан на приём']) {
     it(`${status} remains unchanged when decision is not made`, () => {
       const state = base({ patients:[patient({ status, ...(status === '📅 Записан на приём' ? { appointmentDate:'2030-01-05' } : {}) })] })
